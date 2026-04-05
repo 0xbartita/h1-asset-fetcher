@@ -1,0 +1,22 @@
+# Output files
+packages_list*.json
+packages_list*.txt
+programs_cache.json
+store_links*.txt
+next_downloads.txt
+next_downloads.json
+
+# Downloaded APKs & decompiled output
+apks/
+apks_downloaded/
+decompiled/
+
+# Runtime
+__pycache__/
+*.pyc
+.venv/
+*.session
+not_installed.txt
+
+# Telegram session
+*.session

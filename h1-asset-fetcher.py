@@ -310,20 +310,68 @@ def extract_identifier(raw_identifier, asset_type=None):
     # Return as-is
     return identifier
 
+# ── iTunes Lookup (resolve bundle IDs to App Store URLs) ─────
+
+_itunes_cache = {}
+
+def lookup_itunes(bundle_id):
+    """Resolve iOS bundle ID to App Store URL via iTunes Search API."""
+    if bundle_id in _itunes_cache:
+        return _itunes_cache[bundle_id]
+    try:
+        resp = requests.get(
+            f"https://itunes.apple.com/lookup?bundleId={bundle_id}&country=us",
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("resultCount", 0) > 0:
+                result = data["results"][0]
+                url = result.get("trackViewUrl", "").split("?")[0]  # Remove tracking params
+                _itunes_cache[bundle_id] = url
+                return url
+    except Exception:
+        pass
+    _itunes_cache[bundle_id] = None
+    return None
+
+def resolve_ios_store_links(packages):
+    """Batch resolve iOS bundle IDs to App Store URLs."""
+    to_resolve = [a for a in packages
+                  if a["asset_type"] in ("APPLE_STORE_APP_ID", "OTHER_IPA")
+                  and not a["package"].isdigit()]
+    if not to_resolve:
+        return
+
+    log(f"Resolving {len(to_resolve)} iOS bundle IDs via iTunes API...", "STEP")
+    resolved = 0
+    for i, asset in enumerate(to_resolve, 1):
+        url = lookup_itunes(asset["package"])
+        if url:
+            asset["_store_url"] = url
+            resolved += 1
+        if i % 20 == 0:
+            log(f"  ... {i}/{len(to_resolve)} ({resolved} resolved)", "STEP")
+        time.sleep(0.1)  # Rate limit
+    log(f"  Resolved {resolved}/{len(to_resolve)} bundle IDs", "OK")
+
 # ── Store URL generation ─────────────────────────────────────
 
 def store_url(asset):
     """Generate store URL based on asset type."""
+    # Use pre-resolved URL if available
+    if "_store_url" in asset:
+        return asset["_store_url"]
+
     at = asset["asset_type"]
     pkg = asset["package"]
     if at in ("GOOGLE_PLAY_APP_ID", "OTHER_APK"):
         return f"https://play.google.com/store/apps/details?id={pkg}"
     elif at == "APPLE_STORE_APP_ID":
-        # Numeric ID -> proper App Store link
         if pkg.isdigit():
             return f"https://apps.apple.com/app/id{pkg}"
-        # Bundle ID -> search link (no direct URL without numeric ID)
-        return f"https://apps.apple.com/app/{pkg}"
+        # Fallback: search URL (bundle ID couldn't be resolved)
+        return f"https://apps.apple.com/search?term={pkg}"
     elif at == "TESTFLIGHT":
         if pkg.startswith("http"):
             return pkg
@@ -514,7 +562,11 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
                       "WINDOWS_APP_STORE_APP_ID": "WinStore"}.get(a["asset_type"], a["asset_type"])
         log(f"  {i:>3}. {a['package']:<50} [{asset_label}] ({a['program'][:25]})", "INFO")
 
-    # Step 5: Save output
+    # Step 5: Resolve iOS store links
+    if args.scope in ("ios", "all"):
+        resolve_ios_store_links(valid_packages)
+
+    # Step 6: Save output
     outdir, links = save_output(args, valid_packages, programs, prog_info, seen_handles, unique)
 
     print(f"\n{'='*70}")

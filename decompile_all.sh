@@ -29,7 +29,7 @@ decompile_one() {
 
     if [ -n "$apk" ]; then
         echo "[JADX] $pkg -> $apk"
-        jadx --no-res --no-debug-info -q -j 2 "$apk" -d "$out" 2>/dev/null
+        jadx --no-debug-info -q -j 2 "$apk" -d "$out" 2>/dev/null
     elif [ -n "$xapk" ]; then
         # Extract base APK from bundle
         local tmp="/tmp/xapk_$$_$pkg"
@@ -41,7 +41,7 @@ decompile_one() {
         fi
         if [ -n "$base" ]; then
             echo "[JADX] $pkg -> $base (from bundle)"
-            jadx --no-res --no-debug-info -q -j 2 "$base" -d "$out" 2>/dev/null
+            jadx --no-debug-info -q -j 2 "$base" -d "$out" 2>/dev/null
         else
             echo "[FAIL] $pkg -> no APK found in bundle"
         fi

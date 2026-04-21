@@ -19,6 +19,34 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 - Batch decompilation with [jadx](https://github.com/skylot/jadx) and dex2jar/procyon
 - One-command setup with `install.sh`
 
+
+## Installation
+
+### Automatic
+
+```bash
+./install.sh
+```
+
+Installs: Python deps, apkeep, jadx, apktool, dex2jar, procyon.
+
+### Manual
+
+```bash
+pip install -r requirements.txt
+
+# Required
+# - apkeep: https://github.com/EFForg/apkeep/releases
+# - jadx:   https://github.com/skylot/jadx/releases
+
+# Optional
+# - apktool:  https://apktool.org/
+# - dex2jar:  https://github.com/pxb1988/dex2jar
+# - procyon:  https://github.com/mstrobel/procyon
+# - playwright: pip install playwright && playwright install chromium
+```
+
+
 ## Quick Start
 
 ```bash
@@ -124,43 +152,6 @@ APKS_DIR=apks OUT_DIR=decompiled ./decompile_all.sh
 4. Audit      your scanner / manual review
 ```
 
-## Installation
-
-### Automatic
-
-```bash
-./install.sh
-```
-
-Installs: Python deps, apkeep, jadx, apktool, dex2jar, procyon.
-
-### Manual
-
-```bash
-pip install -r requirements.txt
-
-# Required
-# - apkeep: https://github.com/EFForg/apkeep/releases
-# - jadx:   https://github.com/skylot/jadx/releases
-
-# Optional
-# - apktool:  https://apktool.org/
-# - dex2jar:  https://github.com/pxb1988/dex2jar
-# - procyon:  https://github.com/mstrobel/procyon
-# - playwright: pip install playwright && playwright install chromium
-```
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `H1_USERNAME` | HackerOne API username |
-| `H1_API_TOKEN` | HackerOne API token |
-| `TELEGRAM_API_ID` | Telegram API ID (for revengi_downloader) |
-| `TELEGRAM_API_HASH` | Telegram API hash (for revengi_downloader) |
-| `APKEEP_BIN` | Custom apkeep binary path |
-| `APKS_DIR` | APKs directory for decompile scripts |
-| `OUT_DIR` | Output directory for decompile scripts |
 
 ## License
 

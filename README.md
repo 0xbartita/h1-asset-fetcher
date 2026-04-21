@@ -68,6 +68,9 @@ output/
   programs_cache.json  # Reusable cache
 ```
 
+<img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/b133a0af-b0c5-4d74-8061-98799dd059a7" />
+
+
 ### `apk_downloader.py` — APK Bulk Downloader
 
 Downloads APKs using [apkeep](https://github.com/EFForg/apkeep).
@@ -76,6 +79,9 @@ Downloads APKs using [apkeep](https://github.com/EFForg/apkeep).
 python3 apk_downloader.py -i output/android/packages.txt -o apks/ -w 4
 python3 apk_downloader.py -i output/android/packages.txt -o apks/ --source apk-pure
 ```
+
+<img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/c4f5732d-4836-4660-a7ea-fb645a8334e5" />
+
 
 ### `apk_browser_downloader.py` — Browser-Based Downloader
 
@@ -105,6 +111,9 @@ APKS_DIR=apks OUT_DIR=decompiled ./decompile_all.sh
 # dex2jar + procyon (fast, parallel)
 ./decompile_fast.sh
 ```
+
+<img width="2012" height="354" alt="image" src="https://github.com/user-attachments/assets/55468c4d-817d-4975-adc3-ee1b8d4272b6" />
+
 
 ## Workflow
 

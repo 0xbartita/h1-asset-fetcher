@@ -50,7 +50,7 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
-git clone https://github.com/<username>/h1-asset-fetcher.git
+git clone https://github.com/0xbartita/h1-asset-fetcher.git
 cd h1-asset-fetcher
 ./install.sh
 

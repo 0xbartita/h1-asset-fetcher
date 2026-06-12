@@ -13,8 +13,9 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 ## Features
 
 - Fetch **Android** (Play Store / APK), **iOS** (App Store / TestFlight / IPA), and **Executable** assets
-- Filter by program type: private BBP, public BBP, VDP, or all
-- Organized output: `output/<scope>/packages.txt`, `store_links.txt`, `packages.json`
+- Multi-platform: **HackerOne** plus **Bugcrowd**, **Intigriti**, **YesWeHack**, **Immunefi** (`--platform`)
+- Filter by program type: private BBP, public BBP, VDP, or all — plus **per-asset** in-scope / bounty-eligible filtering
+- Organized output: `output/<scope>/packages.txt`, `packages.tsv`, `store_links.txt`, `packages.json`
 - Bulk APK download via [apkeep](https://github.com/EFForg/apkeep) with fallback downloaders
 - Batch decompilation with [jadx](https://github.com/skylot/jadx) and dex2jar/procyon
 - One-command setup with `install.sh`
@@ -80,20 +81,45 @@ python3 h1-asset-fetcher.py -u <username> -t <token> --scope <scope> [options]
 | `-t, --token` | HackerOne API token (or `H1_API_TOKEN` env var) |
 | `-s, --scope` | **Required.** `android`, `ios`, `exe`, or `all` |
 | `-f, --filter` | Comma-separated filter: `-f bbp,private` `-f vdp,public` `-f bbp` `-f all` (default: `bbp,private`) |
+| `--platform` | Source platform: `h1` (default), `bugcrowd`, `intigriti`, `yeswehack`, `immunefi` |
+| `-b, --bounty-only` | Keep only assets individually eligible for bounty (per-asset `eligible_for_bounty`), not just paid programs |
+| `--oos` | Also list out-of-scope assets (`eligible_for_submission=false`) into `oos_packages.txt` |
+| `--columns` | Columns for `packages.tsv`: `t`=target `a`=asset_type `c`=category `h`=handle `p`=program `u`=store_url (default: `t,a,h,u`) |
+| `--delimiter` | Column delimiter for `packages.tsv` (default: tab) |
 | `-o, --output` | Output directory (default: `output/`) |
 | `--programs-file` | Reuse cached `programs_cache.json` |
+
+**Per-asset scoping:** HackerOne marks each asset individually, so a paid program can still contain out-of-scope or non-bounty assets. The fetcher reads `eligible_for_submission` / `eligible_for_bounty` per asset — out-of-scope assets are excluded from `packages.txt` (and listed in `oos_packages.txt` with `--oos`), and `-b` keeps only bounty-eligible ones.
 
 **Output:**
 ```
 output/
   android/
-    packages.txt       # Package names, one per line
-    packages.json      # Full details with program info
+    packages.txt       # In-scope package names, one per line (feeds the downloader)
+    packages.tsv       # Annotated columns: target, asset_type, handle, store_url
+    packages.json      # Full details incl. per-asset eligibility + in_scope flag
     store_links.txt    # Play Store / App Store links
+    oos_packages.txt   # Out-of-scope identifiers (with --oos)
     summary.json       # Scan metadata
   ios/
     ...
   programs_cache.json  # Reusable cache
+```
+
+### Other platforms (`--platform`)
+
+Beyond HackerOne, the same mobile/exe pipeline can pull scope from other platforms — assets are normalized so the download/decompile steps still work:
+
+| Platform | Auth (via `-t` or env var) | Where to get it |
+|----------|----------------------------|-----------------|
+| `bugcrowd` | `_bugcrowd_session` cookie · `BUGCROWD_TOKEN` | browser dev-tools cookie after logging in to bugcrowd.com |
+| `intigriti` | researcher API token · `INTIGRITI_TOKEN` | app.intigriti.com → personal access tokens |
+| `yeswehack` | JWT · `YESWEHACK_TOKEN` (or `-u` email + `YESWEHACK_PASSWORD`) | api.yeswehack.com |
+| `immunefi` | none (public) | — (mostly web3; few mobile apps) |
+
+```bash
+python3 h1-asset-fetcher.py --platform bugcrowd -t "$BUGCROWD_TOKEN" --scope android
+python3 h1-asset-fetcher.py --platform immunefi --scope all
 ```
 
 <img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/b133a0af-b0c5-4d74-8061-98799dd059a7" />
@@ -124,9 +150,17 @@ python3 apk_browser_downloader.py -i failed_packages.txt -o apks/
 
 Downloads APKs via [@RevEngiBot](https://t.me/RevEngiBot) on Telegram.
 
+Set your Telegram API credentials (get an `api_id`/`api_hash` at [my.telegram.org](https://my.telegram.org)), then run the one-time login to create the session file before downloading:
+
 ```bash
 export TELEGRAM_API_ID=your_api_id
 export TELEGRAM_API_HASH=your_api_hash
+export TELEGRAM_PHONE=+1234567890   # optional; prompted interactively if unset
+
+# One-time login — creates the ~/.revengi_session session file
+python3 telegram_login.py
+
+# Then download (reuses the session)
 python3 revengi_downloader.py -i failed_packages.txt -o apks/
 ```
 

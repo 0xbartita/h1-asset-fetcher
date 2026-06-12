@@ -48,6 +48,28 @@ SCOPE_LABELS = {
     "all": "All asset types",
 }
 
+# Normalized category per H1 asset type (used by the --columns 'c' field).
+ASSET_CATEGORY = {
+    "GOOGLE_PLAY_APP_ID": "android",
+    "OTHER_APK": "android",
+    "APPLE_STORE_APP_ID": "ios",
+    "TESTFLIGHT": "ios",
+    "OTHER_IPA": "ios",
+    "DOWNLOADABLE_EXECUTABLES": "exe",
+    "WINDOWS_APP_STORE_APP_ID": "exe",
+}
+
+# Composable columns for packages.tsv (--columns). Each renders one field of an
+# asset dict. store_url is resolved lazily so it picks up iTunes-resolved links.
+COLUMN_FIELDS = {
+    "t": lambda a: a["package"],                              # target / identifier
+    "a": lambda a: a["asset_type"],                           # raw H1 asset type
+    "c": lambda a: ASSET_CATEGORY.get(a["asset_type"], "other"),  # normalized category
+    "h": lambda a: a["handle"],                               # program handle
+    "p": lambda a: a["program"],                              # program name
+    "u": lambda a: store_url(a),                              # store / download URL
+}
+
 def log(msg, level="INFO"):
     colors = {"INFO": "\033[94m", "OK": "\033[92m", "WARN": "\033[93m", "ERR": "\033[91m", "STEP": "\033[96m"}
     with _print_lock:
@@ -198,7 +220,17 @@ def fetch_scopes(handle, asset_types=None):
         for s in data["data"]:
             a = s.get("attributes", {})
             if a.get("asset_type") in asset_types:
-                scopes.append({"asset_type": a["asset_type"], "asset_identifier": a.get("asset_identifier", "")})
+                scopes.append({
+                    "asset_type": a["asset_type"],
+                    "asset_identifier": a.get("asset_identifier", ""),
+                    # Per-asset eligibility: H1 marks each structured scope
+                    # individually, so a paid program can still contain
+                    # out-of-scope or non-bounty assets. Default to in-scope /
+                    # unknown when absent so older cached scopes keep working.
+                    "eligible_for_submission": a.get("eligible_for_submission", True),
+                    "eligible_for_bounty": a.get("eligible_for_bounty"),
+                    "max_severity": a.get("max_severity"),
+                })
         nxt = data.get("links", {}).get("next")
         url = (f"{H1_API_BASE}{nxt}" if nxt and not nxt.startswith("http") else nxt) if nxt and nxt != url else None
     return scopes
@@ -403,8 +435,25 @@ def store_url(asset):
 
 # ── Output ───────────────────────────────────────────────────
 
-def save_output(args, valid_packages, programs, prog_info, seen_handles, unique):
+def json_entry(a, in_scope=True):
+    """One packages.json record for an asset, with per-asset eligibility."""
+    return {
+        "package": a["package"],
+        "program": a["program"],
+        "handle": a["handle"],
+        "asset_type": a["asset_type"],
+        "category": ASSET_CATEGORY.get(a["asset_type"], "other"),
+        "store_url": store_url(a),
+        "in_scope": in_scope,
+        "eligible_for_submission": a.get("eligible_for_submission", True),
+        "eligible_for_bounty": a.get("eligible_for_bounty"),
+        "max_severity": a.get("max_severity"),
+    }
+
+
+def save_output(args, valid_packages, programs, prog_info, seen_handles, unique, oos_packages=None):
     """Save all output files to organized directory."""
+    oos_packages = oos_packages or []
     # Create output directory: <output>/<scope>/
     outdir = Path(args.output) / args.scope
     outdir.mkdir(parents=True, exist_ok=True)
@@ -412,39 +461,92 @@ def save_output(args, valid_packages, programs, prog_info, seen_handles, unique)
     links = [store_url(a) for a in valid_packages]
     pkg_names = [a["package"] for a in valid_packages]
 
-    # Save files
+    # Save files (bare packages.txt is kept for the downloader scripts)
     (outdir / "store_links.txt").write_text("\n".join(links) + "\n")
     (outdir / "packages.txt").write_text("\n".join(pkg_names) + "\n")
-    (outdir / "packages.json").write_text(json.dumps([{
-        "package": a["package"],
-        "program": a["program"],
-        "handle": a["handle"],
-        "asset_type": a["asset_type"],
-        "store_url": store_url(a),
-    } for a in valid_packages], indent=2) + "\n")
+
+    # Gap #3: annotated, composable TSV (target + category + program + url, etc.)
+    cols = [c.strip() for c in args.columns.split(",") if c.strip()]
+    delim = args.delimiter.replace("\\t", "\t").replace("\\n", "\n")
+
+    def render(a):
+        return delim.join(str(COLUMN_FIELDS[c](a)) for c in cols if c in COLUMN_FIELDS)
+
+    (outdir / "packages.tsv").write_text("\n".join(render(a) for a in valid_packages) + "\n")
+
+    # packages.json carries full per-asset detail incl. eligibility + OOS entries
+    (outdir / "packages.json").write_text(json.dumps(
+        [json_entry(a, in_scope=True) for a in valid_packages]
+        + [json_entry(a, in_scope=False) for a in oos_packages],
+        indent=2) + "\n")
+
+    # Gap #2: out-of-scope assets in their own files (informational; not downloaded)
+    if oos_packages:
+        (outdir / "oos_packages.txt").write_text(
+            "\n".join(a["package"] for a in oos_packages) + "\n")
+        (outdir / "oos_store_links.txt").write_text(
+            "\n".join(store_url(a) for a in oos_packages) + "\n")
 
     # Programs cache (in root output dir)
     cache_path = Path(args.output) / "programs_cache.json"
     cache_path.write_text(json.dumps(programs, indent=2) + "\n")
 
     # Summary JSON
+    files = {
+        "packages": str(outdir / "packages.txt"),
+        "packages_tsv": str(outdir / "packages.tsv"),
+        "packages_json": str(outdir / "packages.json"),
+        "store_links": str(outdir / "store_links.txt"),
+        "programs_cache": str(cache_path),
+    }
+    if oos_packages:
+        files["oos_packages"] = str(outdir / "oos_packages.txt")
+        files["oos_store_links"] = str(outdir / "oos_store_links.txt")
+
     summary = {
+        "platform": args.platform,
         "scope": args.scope,
         "filter": args.filter,
+        "bounty_only": args.bounty_only,
         "total_programs": len(seen_handles),
         "total_assets": len(valid_packages),
+        "out_of_scope_assets": len(oos_packages),
         "asset_types": list(set(a["asset_type"] for a in valid_packages)),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-        "files": {
-            "packages": str(outdir / "packages.txt"),
-            "packages_json": str(outdir / "packages.json"),
-            "store_links": str(outdir / "store_links.txt"),
-            "programs_cache": str(cache_path),
-        }
+        "files": files,
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
     return outdir, links
+
+# ── Other platforms (Bugcrowd / Intigriti / YesWeHack / Immunefi) ─
+
+def fetch_platform(args, asset_types):
+    """Dispatch to a non-HackerOne platform fetcher in the platforms/ package.
+
+    Each module returns programs in the same shape as the HackerOne path, with
+    scopes normalized to H1 asset_type names, so the rest of the pipeline
+    (dedup, extract_identifier, store_url, save_output) is reused unchanged.
+    """
+    try:
+        from platforms import get_fetcher, PlatformAuthError
+    except Exception as e:
+        log(f"Platform support unavailable (platforms/ package not importable): {e}", "ERR")
+        sys.exit(1)
+    try:
+        fetcher = get_fetcher(args.platform)
+    except Exception as e:
+        log(f"Platform '{args.platform}' not available: {e}", "ERR")
+        sys.exit(1)
+
+    log(f"Fetching programs from {args.platform}...", "STEP")
+    try:
+        return fetcher(token=args.token, username=args.username,
+                       prog_filter=args.filter, asset_types=asset_types,
+                       oos=args.oos, log=log)
+    except PlatformAuthError as e:
+        log(str(e), "ERR")
+        sys.exit(1)
 
 # ── Main ─────────────────────────────────────────────────────
 
@@ -473,11 +575,28 @@ Filters (combine with comma):
   public        All public programs (BBP + VDP)
   all           Everything
 
+Per-asset filtering / output:
+  -b, --bounty-only   Keep only assets individually flagged eligible_for_bounty
+  --oos               Also list out-of-scope assets in oos_packages.txt
+  --columns t,c,h,u   Annotated packages.tsv columns (t=target a=asset_type
+                      c=category h=handle p=program u=store_url)
+
+Platforms (--platform):
+  h1 (default)   HackerOne          -u user -t token   (H1_USERNAME / H1_API_TOKEN)
+  bugcrowd       Bugcrowd           -t <_bugcrowd_session cookie>  (BUGCROWD_TOKEN)
+  intigriti      Intigriti          -t <researcher API token>      (INTIGRITI_TOKEN)
+  yeswehack      YesWeHack          -t <JWT> | -u email + YESWEHACK_PASSWORD  (YESWEHACK_TOKEN)
+  immunefi       Immunefi           no auth (public; mostly web3, few mobile apps)
+
+  %(prog)s --platform bugcrowd -t "$BUGCROWD_TOKEN" --scope android
+  %(prog)s --platform immunefi --scope all
+
 Environment variables:
   H1_USERNAME    HackerOne API username
   H1_API_TOKEN   HackerOne API token
+  BUGCROWD_TOKEN / INTIGRITI_TOKEN / YESWEHACK_TOKEN   Per-platform tokens (fallback for -t)
 
-Get your API token at: https://hackerone.com/settings/api_token/edit
+Get your H1 API token at: https://hackerone.com/settings/api_token/edit
         """)
     parser.add_argument("-u", "--username", default=os.environ.get("H1_USERNAME", ""),
                         help="HackerOne API username (or set H1_USERNAME env var)")
@@ -494,7 +613,25 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
                         help="Asset scope: android, ios, exe, all")
     parser.add_argument("--programs-file", default=None,
                         help="Reuse cached programs_cache.json instead of fetching")
+    parser.add_argument("--platform", default="h1",
+                        choices=["h1", "hackerone", "bugcrowd", "intigriti", "yeswehack", "immunefi"],
+                        help="Bug bounty platform to fetch scope from (default: h1)")
+    parser.add_argument("-b", "--bounty-only", action="store_true",
+                        help="Keep only assets individually eligible for bounty "
+                             "(per-asset eligible_for_bounty), not just paid programs")
+    parser.add_argument("--oos", action="store_true",
+                        help="Also collect out-of-scope assets (eligible_for_submission=false) "
+                             "into oos_packages.txt / oos_store_links.txt")
+    parser.add_argument("--columns", default="t,a,h,u",
+                        help="Columns for packages.tsv: t=target a=asset_type c=category "
+                             "h=handle p=program u=store_url (default: t,a,h,u)")
+    parser.add_argument("--delimiter", default="\t",
+                        help="Delimiter for packages.tsv columns (default: tab; use '\\t')")
     args = parser.parse_args()
+
+    # --platform accepts 'hackerone' as an alias for the default 'h1' path.
+    if args.platform == "hackerone":
+        args.platform = "h1"
 
     # Validate filter
     valid_parts = {"bbp", "vdp", "private", "public", "all"}
@@ -506,16 +643,7 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
             log(f"  Combine with comma: -f bbp,private  or  -f vdp,public", "ERR")
             sys.exit(1)
 
-    if not args.username or not args.token:
-        log("Username and token required.", "ERR")
-        log("  Use -u/-t flags or set H1_USERNAME/H1_API_TOKEN env vars.", "ERR")
-        log("  Get your token: https://hackerone.com/settings/api_token/edit", "ERR")
-        sys.exit(1)
-
     asset_types = SCOPE_TYPES[args.scope]
-
-    global h1
-    h1 = H1Session(args.username, args.token)
 
     print("")
     print("  \033[96m╔════════════════════════════════════════════════════════════╗\033[0m")
@@ -523,8 +651,10 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
     print("  \033[96m╚════════════════════════════════════════════════════════════╝\033[0m")
     print("")
 
-    log(f"Scope: {SCOPE_LABELS[args.scope]}", "INFO")
+    log(f"Platform: {args.platform} | Scope: {SCOPE_LABELS[args.scope]}", "INFO")
     log(f"Filter: {args.filter} | Output: {args.output}/{args.scope}/", "INFO")
+    if args.bounty_only:
+        log("Bounty-only: keeping only per-asset bounty-eligible assets", "INFO")
 
     # Step 1: Get programs
     if args.programs_file:
@@ -535,8 +665,17 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
             prog["scopes"] = [s for s in prog.get("scopes", []) if s["asset_type"] in asset_types]
         programs = [p for p in programs if p["scopes"]]
         log(f"  Filtered to {len(programs)} programs with {args.scope} assets", "OK")
-    else:
+    elif args.platform == "h1":
+        if not args.username or not args.token:
+            log("Username and token required for HackerOne.", "ERR")
+            log("  Use -u/-t flags or set H1_USERNAME/H1_API_TOKEN env vars.", "ERR")
+            log("  Get your token: https://hackerone.com/settings/api_token/edit", "ERR")
+            sys.exit(1)
+        global h1
+        h1 = H1Session(args.username, args.token)
         programs = fetch_all(prog_filter=args.filter, asset_types=asset_types)
+    else:
+        programs = fetch_platform(args, asset_types)
 
     if not programs:
         log("No programs found.", "ERR")
@@ -548,24 +687,50 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
     # Step 2: Collect + deduplicate assets
     prog_info = {p["handle"]: p for p in programs}
     assets = []
+    oos_assets = []
+    dropped_oos = 0
+    dropped_nonbounty = 0
     for prog in programs:
         for scope in prog.get("scopes", []):
-            assets.append({
+            record = {
                 "program": prog["name"],
                 "handle": prog["handle"],
                 "asset_type": scope["asset_type"],
                 "identifier": scope["asset_identifier"],
-            })
+                "eligible_for_submission": scope.get("eligible_for_submission", True),
+                "eligible_for_bounty": scope.get("eligible_for_bounty"),
+                "max_severity": scope.get("max_severity"),
+            }
+            # Gap #1: per-asset scope gating. Drop assets the program marks
+            # out-of-scope (and, with --bounty-only, individually non-paying).
+            if not record["eligible_for_submission"]:
+                dropped_oos += 1
+                oos_assets.append(record)
+                continue
+            if args.bounty_only and record["eligible_for_bounty"] is False:
+                dropped_nonbounty += 1
+                continue
+            assets.append(record)
 
-    seen = set()
-    unique = []
-    for a in assets:
-        pkg = extract_identifier(a["identifier"], asset_type=a["asset_type"])
-        if not pkg or pkg in seen:
-            continue
-        seen.add(pkg)
-        a["package"] = pkg
-        unique.append(a)
+    def dedup(items):
+        seen_local = set()
+        out = []
+        for a in items:
+            pkg = extract_identifier(a["identifier"], asset_type=a["asset_type"])
+            if not pkg or pkg in seen_local:
+                continue
+            seen_local.add(pkg)
+            a["package"] = pkg
+            out.append(a)
+        return out
+
+    unique = dedup(assets)
+    oos_unique = dedup(oos_assets) if args.oos else []
+
+    if dropped_oos or dropped_nonbounty:
+        extra = (f", {dropped_nonbounty} non-bounty" if args.bounty_only else "")
+        tail = " (saved to oos_*; --oos)" if args.oos else " (use --oos to list them)"
+        log(f"Per-asset filter: dropped {dropped_oos} out-of-scope{extra}{tail}", "INFO")
 
     # Step 3: Programs table
     print(f"\n{'='*100}")
@@ -609,8 +774,10 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
         return is_valid_pkg(pkg)
 
     valid_packages = [a for a in unique if is_valid_asset(a)]
+    valid_oos = [a for a in oos_unique if is_valid_asset(a)]
 
-    print(f"\n\033[92m[OK]\033[0m {len(valid_packages)} valid assets from {len(seen_handles)} programs\n")
+    print(f"\n\033[92m[OK]\033[0m {len(valid_packages)} valid assets from {len(seen_handles)} programs"
+          + (f" (+{len(valid_oos)} out-of-scope)" if valid_oos else "") + "\n")
     for i, a in enumerate(valid_packages, 1):
         asset_label = {"GOOGLE_PLAY_APP_ID": "PlayStore", "OTHER_APK": "APK",
                       "APPLE_STORE_APP_ID": "AppStore", "TESTFLIGHT": "TestFlight",
@@ -624,14 +791,17 @@ Get your API token at: https://hackerone.com/settings/api_token/edit
         resolve_ios_store_links(valid_packages)
 
     # Step 6: Save output
-    outdir, links = save_output(args, valid_packages, programs, prog_info, seen_handles, unique)
+    outdir, links = save_output(args, valid_packages, programs, prog_info, seen_handles, unique, valid_oos)
 
     print(f"\n{'='*70}")
     log("OUTPUT", "STEP")
     print(f"{'='*70}")
     log(f"  {outdir}/packages.txt      — {len(valid_packages)} package identifiers", "OK")
-    log(f"  {outdir}/packages.json     — Full details (JSON)", "OK")
+    log(f"  {outdir}/packages.tsv      — Annotated columns ({args.columns})", "OK")
+    log(f"  {outdir}/packages.json     — Full details incl. eligibility (JSON)", "OK")
     log(f"  {outdir}/store_links.txt   — {len(links)} store links", "OK")
+    if args.oos and valid_oos:
+        log(f"  {outdir}/oos_packages.txt  — {len(valid_oos)} out-of-scope identifiers", "OK")
     log(f"  {outdir}/summary.json      — Scan summary", "OK")
     log(f"  {args.output}/programs_cache.json — Cached programs (--programs-file)", "OK")
     print(f"{'='*70}")

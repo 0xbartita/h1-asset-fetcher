@@ -12,6 +12,7 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 
 ## Features
 
+- **Interactive TUI** — run `h1-asset-fetcher` with no arguments for a full-pipeline dashboard (fetch → browse → download)
 - Fetch **Android** (Play Store / APK), **iOS** (App Store / TestFlight / IPA), and **Executable** assets
 - Multi-platform: **HackerOne** plus **Bugcrowd**, **Intigriti**, **YesWeHack**, **Immunefi** (`--platform`)
 - Filter by program type: private BBP, public BBP, VDP, or all — plus **per-asset** in-scope / bounty-eligible filtering
@@ -78,6 +79,32 @@ python3 h1-asset-fetcher.py -u <username> -t <token> --scope all --filter all
 ```
 
 > Get your API token at [hackerone.com/settings/api_token/edit](https://hackerone.com/settings/api_token/edit)
+
+## Interactive TUI
+
+Run with **no arguments** to open the dashboard — a single screen that walks you through
+platform → credentials → scope → fetch → browse → download:
+
+```bash
+h1-asset-fetcher                 # or: python3 -m h1_asset_fetcher
+```
+
+Each step unlocks the next as you submit it; completed steps collapse to a one-line summary
+you can re-open with `edit`. Select assets in the results table (Enter toggles) and download
+them without leaving the screen.
+
+```
+┌ h1-asset-fetcher ─────────────────────────────────────┐
+│ ✓ 1. Platform: HackerOne                   [edit]     │
+│ ✓ 2. Credentials: token=***                [edit]     │
+│ ✓ 3. Scope: android · bbp,private          [edit]     │
+│ ▶ 4. Programs & assets   87 assets from 42 programs   │
+│      sel  program        asset            type        │
+│      [x]  Acme Corp      com.acme.app     OTHER_APK   │
+│      [ ]  Globex         com.globex.app   OTHER_APK   │
+│      [ Save output ]  [ Download selected ▸ ]         │
+└───────────────────────────────────────────────────────┘
+```
 
 ## Usage
 

@@ -47,6 +47,18 @@ pip install -r requirements.txt
 # - playwright: pip install playwright && playwright install chromium
 ```
 
+### Install the `h1-asset-fetcher` command
+
+```bash
+pip install .            # or: pipx install .   → puts `h1-asset-fetcher` on your PATH
+h1-asset-fetcher --help
+
+# optional extras for the fallback downloaders:
+pip install ".[telegram,browser]"
+```
+
+The legacy `python3 h1-asset-fetcher.py ...` still works (it's a thin shim over the package), and `python3 -m h1_asset_fetcher ...` is equivalent.
+
 
 ## Quick Start
 
@@ -125,53 +137,51 @@ python3 h1-asset-fetcher.py --platform immunefi --scope all
 <img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/b133a0af-b0c5-4d74-8061-98799dd059a7" />
 
 
-### `apk_downloader.py` — APK Bulk Downloader
+### Downloaders — `h1_asset_fetcher.download.*`
 
-Downloads APKs using [apkeep](https://github.com/EFForg/apkeep).
+Bulk APK downloader using [apkeep](https://github.com/EFForg/apkeep):
 
 ```bash
-python3 apk_downloader.py -i output/android/packages.txt -o apks/ -w 4
-python3 apk_downloader.py -i output/android/packages.txt -o apks/ --source apk-pure
+python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ -w 4
+python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ --source apk-pure
 ```
 
 <img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/c4f5732d-4836-4660-a7ea-fb645a8334e5" />
 
-
-### `apk_browser_downloader.py` — Browser-Based Downloader
-
-Headless Chromium downloader that bypasses Cloudflare. Fallback for packages that fail with apkeep.
+Fallbacks for packages apkeep can't fetch:
 
 ```bash
-pip install playwright && playwright install chromium
-python3 apk_browser_downloader.py -i failed_packages.txt -o apks/
+# headless Chromium (bypasses Cloudflare)  — needs the [browser] extra
+pip install ".[browser]" && playwright install chromium
+python3 -m h1_asset_fetcher.download.browser -i failed_packages.txt -o apks/
+
+# pure-HTTP scraper
+python3 -m h1_asset_fetcher.download.web -i failed_packages.txt -o apks/
 ```
 
-### `revengi_downloader.py` — Telegram Bot Downloader
-
-Downloads APKs via [@RevEngiBot](https://t.me/RevEngiBot) on Telegram.
-
-Set your Telegram API credentials (get an `api_id`/`api_hash` at [my.telegram.org](https://my.telegram.org)), then run the one-time login to create the session file before downloading:
+Telegram bot downloader via [@RevEngiBot](https://t.me/RevEngiBot) — needs the `[telegram]` extra. Set your Telegram API credentials (get an `api_id`/`api_hash` at [my.telegram.org](https://my.telegram.org)), run the one-time login, then download:
 
 ```bash
+pip install ".[telegram]"
 export TELEGRAM_API_ID=your_api_id
 export TELEGRAM_API_HASH=your_api_hash
 export TELEGRAM_PHONE=+1234567890   # optional; prompted interactively if unset
 
 # One-time login — creates the ~/.revengi_session session file
-python3 telegram_login.py
+python3 -m h1_asset_fetcher.download.login
 
 # Then download (reuses the session)
-python3 revengi_downloader.py -i failed_packages.txt -o apks/
+python3 -m h1_asset_fetcher.download.telegram_bot -i failed_packages.txt -o apks/
 ```
 
-### Decompile Scripts
+### Decompile — `h1_asset_fetcher/decompile/`
 
 ```bash
 # jadx (thorough, single-threaded)
-APKS_DIR=apks OUT_DIR=decompiled ./decompile_all.sh
+APKS_DIR=apks OUT_DIR=decompiled bash h1_asset_fetcher/decompile/jadx.sh
 
 # dex2jar + procyon (fast, parallel)
-./decompile_fast.sh
+bash h1_asset_fetcher/decompile/fast.sh
 ```
 
 <img width="2012" height="354" alt="image" src="https://github.com/user-attachments/assets/55468c4d-817d-4975-adc3-ee1b8d4272b6" />
@@ -180,11 +190,25 @@ APKS_DIR=apks OUT_DIR=decompiled ./decompile_all.sh
 ## Workflow
 
 ```
-1. Fetch      python3 h1-asset-fetcher.py -u user -t token --scope android
-2. Download   python3 apk_downloader.py -i output/android/packages.txt -o apks/
-3. Decompile  ./decompile_all.sh
+1. Fetch      h1-asset-fetcher -u user -t token --scope android
+2. Download   python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/
+3. Decompile  APKS_DIR=apks OUT_DIR=decompiled bash h1_asset_fetcher/decompile/jadx.sh
 4. Audit      your scanner / manual review
 ```
+
+## Project layout
+
+```
+h1_asset_fetcher/
+  cli.py              # argparse entry; no args → TUI (coming), flags → headless
+  core/               # platform-agnostic: identifiers, output
+  platforms/          # one folder per platform (plugin registry)
+    hackerone/ bugcrowd/ intigriti/ yeswehack/ immunefi/
+  download/           # apkeep, browser, web, telegram_bot, login
+  decompile/          # jadx.sh, fast.sh
+```
+
+Adding a platform = one new folder under `platforms/` with a `Platform` subclass; the CLI picks it up automatically.
 
 
 ## License

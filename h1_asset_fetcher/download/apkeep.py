@@ -5,10 +5,10 @@ Downloads APKs using apkeep from packages_list.txt output of h1-asset-fetcher.py
 Reports which packages failed to download.
 
 Usage:
-  python3 apk_downloader.py
-  python3 apk_downloader.py -i packages_list.txt -o apks/
-  python3 apk_downloader.py -i packages_list.json -o apks/ -w 4
-  python3 apk_downloader.py -i packages_list.txt -o apks/ --source apk-pure
+  python3 -m h1_asset_fetcher.download.apkeep
+  python3 -m h1_asset_fetcher.download.apkeep -i packages_list.txt -o apks/
+  python3 -m h1_asset_fetcher.download.apkeep -i packages_list.json -o apks/ -w 4
+  python3 -m h1_asset_fetcher.download.apkeep -i packages_list.txt -o apks/ --source apk-pure
 """
 
 import sys, json, os, argparse, subprocess, signal, time, threading

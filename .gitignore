@@ -20,3 +20,9 @@ not_installed.txt
 
 # Telegram session
 *.session
+
+# Packaging / test artifacts
+*.egg-info/
+build/
+dist/
+.pytest_cache/

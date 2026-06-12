@@ -31,7 +31,7 @@ import time
 
 import requests
 
-from . import PlatformAuthError, map_mobile_asset
+from .. import PlatformAuthError, map_mobile_asset
 
 PLATFORM = "immunefi"
 PLATFORM_URL = "https://immunefi.com"

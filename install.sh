@@ -224,8 +224,8 @@ else
     fi
 fi
 
-# ── Update decompile_fast.sh defaults ────────────────────────
-# Export env vars so decompile_fast.sh can find the tools
+# ── Update h1_asset_fetcher/decompile/fast.sh defaults ────────────────────────
+# Export env vars so h1_asset_fetcher/decompile/fast.sh can find the tools
 SHELL_RC="$HOME/.bashrc"
 [ -f "$HOME/.zshrc" ] && SHELL_RC="$HOME/.zshrc"
 

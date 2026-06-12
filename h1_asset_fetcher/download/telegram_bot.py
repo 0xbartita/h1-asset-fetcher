@@ -7,7 +7,7 @@ Usage:
   source .venv/bin/activate
   export TELEGRAM_API_ID=your_api_id
   export TELEGRAM_API_HASH=your_api_hash
-  python3 revengi_downloader.py -i apks/still_failed_packages.txt -o apks/
+  python3 -m h1_asset_fetcher.download.telegram_bot -i apks/still_failed_packages.txt -o apks/
 """
 
 import sys, os, json, asyncio, argparse, time, signal
@@ -294,7 +294,7 @@ async def main():
     client = TelegramClient(SESSION_FILE, int(api_id), api_hash)
     await client.connect()
     if not await client.is_user_authorized():
-        log("Session expired. Run: python3 telegram_login.py", "ERR")
+        log("Session expired. Run: python3 -m h1_asset_fetcher.download.login", "ERR")
         sys.exit(1)
     me = await client.get_me()
     log(f"Logged in as: {me.first_name} (@{me.username})", "OK")

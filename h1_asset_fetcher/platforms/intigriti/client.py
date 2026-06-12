@@ -34,7 +34,7 @@ import time
 
 import requests
 
-from . import PlatformAuthError, map_mobile_asset
+from .. import PlatformAuthError, map_mobile_asset
 
 API_BASE = "https://api.intigriti.com/external/researcher/v1"
 SITE_BASE = "https://app.intigriti.com/researcher"

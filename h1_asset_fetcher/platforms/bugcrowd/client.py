@@ -35,7 +35,7 @@ import time
 
 import requests
 
-from . import PlatformAuthError, map_mobile_asset
+from .. import PlatformAuthError, map_mobile_asset
 
 
 BASE_URL = "https://bugcrowd.com"

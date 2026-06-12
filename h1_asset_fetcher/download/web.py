@@ -5,8 +5,8 @@ Downloads APKs directly from APKPure/APKCombo/APKMirror web pages.
 Fallback for packages that fail with apkeep.
 
 Usage:
-  python3 apk_web_downloader.py -i failed_packages.txt -o apks/
-  python3 apk_web_downloader.py -i failed_packages.txt -o apks/ -w 2 --source apkcombo
+  python3 -m h1_asset_fetcher.download.web -i failed_packages.txt -o apks/
+  python3 -m h1_asset_fetcher.download.web -i failed_packages.txt -o apks/ -w 2 --source apkcombo
 """
 
 import sys, os, re, json, time, argparse, signal, threading, subprocess

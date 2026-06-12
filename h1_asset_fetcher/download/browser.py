@@ -5,8 +5,8 @@ Uses headless Chromium (Playwright) to bypass Cloudflare and download APKs
 from APKPure / APKCombo. No rate limits, no bot detection.
 
 Usage:
-  python3 apk_browser_downloader.py -i failed_packages.txt -o apks/
-  python3 apk_browser_downloader.py -i failed_packages.txt -o apks/ --source apkpure
+  python3 -m h1_asset_fetcher.download.browser -i failed_packages.txt -o apks/
+  python3 -m h1_asset_fetcher.download.browser -i failed_packages.txt -o apks/ --source apkpure
 """
 
 import sys, os, re, json, time, argparse, signal

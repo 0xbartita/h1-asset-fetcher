@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-One-time Telegram login — creates session file for revengi_downloader.py
+One-time Telegram login — creates session file for telegram_bot.py
 
 Usage:
   source .venv/bin/activate
   export TELEGRAM_API_ID=your_api_id
   export TELEGRAM_API_HASH=your_api_hash
   export TELEGRAM_PHONE=+1234567890   # optional; prompted interactively if unset
-  python3 telegram_login.py
+  python3 -m h1_asset_fetcher.download.login
 
 Credentials are read from the TELEGRAM_API_ID / TELEGRAM_API_HASH /
 TELEGRAM_PHONE environment variables, or overridden with the matching

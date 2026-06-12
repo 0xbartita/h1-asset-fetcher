@@ -38,7 +38,7 @@ import time
 
 import requests
 
-from . import PlatformAuthError, map_mobile_asset
+from .. import PlatformAuthError, map_mobile_asset
 
 API_BASE = "https://api.yeswehack.com"
 PROGRAMS_ENDPOINT = API_BASE + "/programs"

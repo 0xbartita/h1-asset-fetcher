@@ -12,7 +12,7 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 
 ## Features
 
-- **Interactive TUI** — run `h1-asset-fetcher` with no arguments for a full-pipeline dashboard (fetch → browse → download)
+- **Interactive wizard** — run `h1-asset-fetcher` with no arguments for a guided prompt flow (platform → fetch → download), inline in your terminal
 - Fetch **Android** (Play Store / APK), **iOS** (App Store / TestFlight / IPA), and **Executable** assets
 - Multi-platform: **HackerOne** plus **Bugcrowd**, **Intigriti**, **YesWeHack**, **Immunefi** (`--platform`)
 - Filter by program type: private BBP, public BBP, VDP, or all — plus **per-asset** in-scope / bounty-eligible filtering
@@ -80,30 +80,40 @@ python3 h1-asset-fetcher.py -u <username> -t <token> --scope all --filter all
 
 > Get your API token at [hackerone.com/settings/api_token/edit](https://hackerone.com/settings/api_token/edit)
 
-## Interactive TUI
+## Interactive wizard
 
-Run with **no arguments** to open the dashboard — a single screen that walks you through
-platform → credentials → scope → fetch → browse → download:
+Run with **no arguments** for a clean interactive prompt flow — it asks you through
+platform → credentials → scope → fetch → download, inline in your terminal (no full-screen
+takeover):
 
 ```bash
 h1-asset-fetcher                 # or: python3 -m h1_asset_fetcher
 ```
 
-Each step unlocks the next as you submit it; completed steps collapse to a one-line summary
-you can re-open with `edit`. Select assets in the results table (Enter toggles) and download
-them without leaving the screen.
-
 ```
-┌ h1-asset-fetcher ─────────────────────────────────────┐
-│ ✓ 1. Platform: HackerOne                   [edit]     │
-│ ✓ 2. Credentials: token=***                [edit]     │
-│ ✓ 3. Scope: android · bbp,private          [edit]     │
-│ ▶ 4. Programs & assets   87 assets from 42 programs   │
-│      sel  program        asset            type        │
-│      [x]  Acme Corp      com.acme.app     OTHER_APK   │
-│      [ ]  Globex         com.globex.app   OTHER_APK   │
-│      [ Save output ]  [ Download selected ▸ ]         │
-└───────────────────────────────────────────────────────┘
+  h1-asset-fetcher
+
+? Platform   (↑↓)
+❯ HackerOne
+  Bugcrowd
+  Intigriti
+  YesWeHack
+  Immunefi
+
+? HackerOne username ›  0xbartita
+? HackerOne token    ›  ••••••••••
+? Scope                 android
+? Filter             ›  bbp,private
+? Bounty-only assets?   (y/N)
+? Include out-of-scope? (y/N)
+
+✔ 87 assets from 42 programs
+✔ Saved output to output/android/
+
+? Download APKs now?    Yes
+? Select assets to download   (space toggles, ↵ confirms)
+❯ ◉ com.acme.app        APK   Acme Corp
+  ◯ com.globex.app      APK   Globex
 ```
 
 ## Usage

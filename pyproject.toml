@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "0xbartita" }]
-dependencies = ["requests>=2.28.0", "textual>=0.50"]
+dependencies = ["requests>=2.28.0", "questionary>=2.0"]
 
 [project.optional-dependencies]
 telegram = ["telethon>=1.28.0"]

@@ -5,11 +5,15 @@ programs_cache.json
 store_links*.txt
 next_downloads.txt
 next_downloads.json
+output/
 
 # Downloaded APKs & decompiled output
 apks/
 apks_downloaded/
 decompiled/
+*.apk
+*.xapk
+*.apkm
 
 # Runtime
 __pycache__/

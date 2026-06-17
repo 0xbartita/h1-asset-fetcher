@@ -26,8 +26,7 @@ check_cmd() { command -v "$1" &>/dev/null; }
 echo ""
 echo -e "  ${CYAN}╔════════════════════════════════════════════════════════════╗${RESET}"
 echo -e "  ${CYAN}║${YELLOW}     H1 Asset Fetcher — Dependency Installer               ${CYAN}║${RESET}"
-echo -e "  ${CYAN}║${RESET}  Installs: python deps, apkeep, jadx, apktool,             ${CYAN}║${RESET}"
-echo -e "  ${CYAN}║${RESET}            dex2jar, procyon                                 ${CYAN}║${RESET}"
+echo -e "  ${CYAN}║${RESET}  Installs: python deps, apkeep, jadx, apktool              ${CYAN}║${RESET}"
 echo -e "  ${CYAN}╚════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
 
@@ -70,10 +69,10 @@ if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
     pip3 install --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
     pip3 install -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
     pip install -r "$SCRIPT_DIR/requirements.txt"
-    ok "Python packages installed (requests, telethon)"
+    ok "Python packages installed (requests, questionary)"
 else
-    pip3 install --break-system-packages requests telethon 2>/dev/null || \
-    pip3 install requests telethon
+    pip3 install --break-system-packages requests questionary 2>/dev/null || \
+    pip3 install requests questionary
     ok "Python packages installed"
 fi
 
@@ -174,64 +173,11 @@ WRAPPER
     fi
 fi
 
-# ── dex2jar (optional) ───────────────────────────────────────
-if [ -f "$TOOLS_DIR/dex2jar/d2j-dex2jar.sh" ] || check_cmd d2j-dex2jar.sh; then
-    ok "dex2jar already installed"
-else
-    log "Installing dex2jar (optional, for fast decompile)..."
-    D2J_VERSION=$(curl -sL "https://api.github.com/repos/pxb1988/dex2jar/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "")
-
-    if [ -n "$D2J_VERSION" ]; then
-        D2J_ZIP="dex-tools-v${D2J_VERSION#v}.zip"
-        D2J_URL="https://github.com/pxb1988/dex2jar/releases/download/${D2J_VERSION}/${D2J_ZIP}"
-
-        if curl -sL -o "/tmp/$D2J_ZIP" "$D2J_URL" && [ -s "/tmp/$D2J_ZIP" ]; then
-            unzip -qo "/tmp/$D2J_ZIP" -d "$TOOLS_DIR/dex2jar-tmp"
-            rm -f "/tmp/$D2J_ZIP"
-            # Move extracted dir contents into dex2jar/
-            mkdir -p "$TOOLS_DIR/dex2jar"
-            mv "$TOOLS_DIR"/dex2jar-tmp/*/* "$TOOLS_DIR/dex2jar/" 2>/dev/null || \
-            mv "$TOOLS_DIR"/dex2jar-tmp/* "$TOOLS_DIR/dex2jar/" 2>/dev/null
-            rm -rf "$TOOLS_DIR/dex2jar-tmp"
-            chmod +x "$TOOLS_DIR"/dex2jar/*.sh 2>/dev/null
-            ln -sf "$TOOLS_DIR/dex2jar/d2j-dex2jar.sh" "$BIN_DIR/d2j-dex2jar.sh"
-            ok "dex2jar ${D2J_VERSION} installed -> $TOOLS_DIR/dex2jar/"
-        else
-            warn "dex2jar download failed (optional tool, skipping)"
-        fi
-    else
-        warn "Could not fetch dex2jar release (optional tool, skipping)"
-    fi
-fi
-
-# ── procyon (optional) ───────────────────────────────────────
-if [ -f "$TOOLS_DIR/procyon.jar" ]; then
-    ok "procyon already installed"
-else
-    log "Installing procyon decompiler (optional, for fast decompile)..."
-    PROCYON_VERSION=$(curl -sL "https://api.github.com/repos/mstrobel/procyon/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "")
-
-    if [ -n "$PROCYON_VERSION" ]; then
-        PROCYON_URL="https://github.com/mstrobel/procyon/releases/download/${PROCYON_VERSION}/procyon-decompiler-${PROCYON_VERSION#v}.jar"
-        if curl -sL -o "$TOOLS_DIR/procyon.jar" "$PROCYON_URL" && [ -s "$TOOLS_DIR/procyon.jar" ]; then
-            ok "procyon ${PROCYON_VERSION} installed -> $TOOLS_DIR/procyon.jar"
-        else
-            rm -f "$TOOLS_DIR/procyon.jar"
-            warn "procyon download failed (optional tool, skipping)"
-        fi
-    else
-        warn "Could not fetch procyon release (optional tool, skipping)"
-    fi
-fi
-
-# ── Update h1_asset_fetcher/decompile/fast.sh defaults ────────────────────────
-# Export env vars so h1_asset_fetcher/decompile/fast.sh can find the tools
+# ── Ensure ~/.local/bin is on PATH ────────────────────────────
 SHELL_RC="$HOME/.bashrc"
 [ -f "$HOME/.zshrc" ] && SHELL_RC="$HOME/.zshrc"
 
 PATH_LINE="export PATH=\"\$HOME/.local/bin:\$PATH\""
-D2J_LINE="export D2J=\"$TOOLS_DIR/dex2jar/d2j-dex2jar.sh\""
-PROCYON_LINE="export PROCYON=\"$TOOLS_DIR/procyon.jar\""
 
 add_to_rc() {
     if ! grep -qF "$1" "$SHELL_RC" 2>/dev/null; then
@@ -240,8 +186,6 @@ add_to_rc() {
 }
 
 add_to_rc "$PATH_LINE"
-[ -f "$TOOLS_DIR/dex2jar/d2j-dex2jar.sh" ] && add_to_rc "$D2J_LINE"
-[ -f "$TOOLS_DIR/procyon.jar" ] && add_to_rc "$PROCYON_LINE"
 
 # Apply to current session
 export PATH="$HOME/.local/bin:$PATH"
@@ -274,13 +218,6 @@ verify "Java"        "java"
 verify "apkeep"      "apkeep"
 verify "jadx"        "jadx"
 verify "apktool"     "apktool"
-verify "dex2jar"     "d2j-dex2jar.sh" "optional"
-
-if [ -f "$TOOLS_DIR/procyon.jar" ]; then
-    echo -e "  ${GREEN}✓${RESET}  procyon  ($TOOLS_DIR/procyon.jar)"
-else
-    echo -e "  ${YELLOW}○${RESET}  procyon  (not installed — optional)"
-fi
 
 echo ""
 echo -e "  Tools dir:  ${CYAN}$TOOLS_DIR${RESET}"

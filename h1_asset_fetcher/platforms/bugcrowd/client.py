@@ -82,6 +82,18 @@ def _make_session(token):
     return s
 
 
+def _throttle(session):
+    """Space requests ~REQUEST_DELAY apart (Bugcrowd's WAF bans bursts) without
+    pausing before the very first call — so the listing starts responding
+    immediately instead of looking frozen on launch."""
+    last = getattr(session, "_last_ts", None)
+    if last is not None:
+        wait = REQUEST_DELAY - (time.monotonic() - last)
+        if wait > 0:
+            time.sleep(wait)
+    session._last_ts = time.monotonic()
+
+
 def _get(session, url, log, label=""):
     """GET with a courtesy delay, a couple of retries, and WAF detection.
 
@@ -91,7 +103,7 @@ def _get(session, url, log, label=""):
     """
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
-        time.sleep(REQUEST_DELAY)
+        _throttle(session)
         try:
             resp = session.get(url, timeout=TIMEOUT, allow_redirects=True)
         except requests.RequestException as exc:

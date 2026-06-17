@@ -13,8 +13,6 @@ authors = [{ name = "0xbartita" }]
 dependencies = ["requests>=2.28.0", "questionary>=2.0"]
 
 [project.optional-dependencies]
-telegram = ["telethon>=1.28.0"]
-browser = ["playwright>=1.40.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

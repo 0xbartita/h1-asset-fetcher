@@ -11,6 +11,8 @@ class Immunefi(Platform):
     label = "Immunefi"
     auth = []          # public, no credentials
     env = {}
+    # Immunefi has no public/private or bbp/vdp distinction — filtering is moot.
+    filters = [("Everything (public, paying)", "all")]
 
     def fetch(self, creds, scope, filters, oos):
         return client.fetch(token=None, username=None,

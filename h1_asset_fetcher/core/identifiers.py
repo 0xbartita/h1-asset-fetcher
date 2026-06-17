@@ -71,6 +71,38 @@ def is_valid_pkg(s):
     return bool(re.match(r'^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$', s.strip()))
 
 
+# Common TLDs for distinguishing a forward web hostname (www.brand.com) from a
+# reverse-DNS app id (com.brand.app). Two-letter labels are treated as ccTLDs.
+_WEB_TLDS = {
+    "com", "org", "net", "io", "co", "app", "dev", "ai", "me", "tv", "gg", "xyz",
+    "info", "biz", "online", "site", "store", "tech", "cloud", "live", "life",
+    "world", "shop", "page", "email", "mobi", "name", "pro", "edu", "gov", "top",
+    "vip", "club", "games", "fun", "link", "media",
+}
+
+
+def _is_tld_like(label):
+    label = label.lower()
+    return label in _WEB_TLDS or (len(label) == 2 and label.isalpha())
+
+
+def looks_like_web_host(s):
+    """True if `s` is a forward web hostname/URL (www.x.com, api.x.io/path)
+    rather than a reverse-DNS app id (com.x.app). Reverse-DNS ids START with a
+    TLD; web hostnames END with one. Used to reject websites that a platform
+    mislabeled as a mobile app (executables may legitimately be domains, so the
+    caller decides which asset types to apply this to)."""
+    s = (s or "").strip().lower()
+    if not s:
+        return False
+    if s.startswith(("http://", "https://")) or "/" in s:
+        return True
+    labels = s.split(".")
+    if len(labels) < 2:
+        return False
+    return _is_tld_like(labels[-1]) and not _is_tld_like(labels[0])
+
+
 def extract_identifier(raw_identifier, asset_type=None):
     """Extract a clean package/app identifier from raw scope data."""
     identifier = raw_identifier.strip()
@@ -93,6 +125,10 @@ def extract_identifier(raw_identifier, asset_type=None):
         m = re.match(r'^[A-Z0-9]{10}\.(.*)', identifier)
         if m:
             return m.group(1)
+
+        # A website mislabeled as an iOS app (e.g. www.brand.com) is not an app.
+        if looks_like_web_host(identifier):
+            return None
 
         # Already a clean bundle ID
         if is_valid_pkg(identifier):
@@ -126,6 +162,11 @@ def extract_identifier(raw_identifier, asset_type=None):
     m = re.search(r'id=([a-zA-Z0-9_.]+)', identifier)
     if m:
         return m.group(1)
+
+    # A website mislabeled as an Android app is not a package. Only filter the
+    # app types — DOWNLOADABLE_EXECUTABLES / Windows assets may be domains.
+    if asset_type in ("GOOGLE_PLAY_APP_ID", "OTHER_APK") and looks_like_web_host(identifier):
+        return None
 
     # Already a valid package name
     if is_valid_pkg(identifier):

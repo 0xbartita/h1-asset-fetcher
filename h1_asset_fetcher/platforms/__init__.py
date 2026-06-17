@@ -45,6 +45,18 @@ class Cred:
         self.required = required
 
 
+# Standard program-filter presets as (label, filter-string) pairs. Each platform
+# exposes the subset it can actually express via its `filters` attribute, so the
+# wizard only ever offers filters that platform honors (e.g. Intigriti/YesWeHack
+# have no VDP concept; Immunefi has no filter dimensions at all).
+PRIVATE_BBP = ("Private BBP", "bbp,private")
+PUBLIC_BBP = ("Public BBP", "bbp,public")
+ALL_BBP = ("All BBP", "bbp")
+VDP_ONLY = ("VDP only", "vdp")
+EVERYTHING = ("Everything", "all")
+FULL_FILTERS = [PRIVATE_BBP, PUBLIC_BBP, ALL_BBP, VDP_ONLY, EVERYTHING]
+
+
 class Platform:
     """Base class for a bug-bounty platform plugin."""
 
@@ -52,6 +64,7 @@ class Platform:
     label = ""         # display name
     auth = []          # list[Cred]
     env = {}           # {cred_key: ENV_VAR}
+    filters = FULL_FILTERS   # (label, value) presets this platform can express
 
     def fetch(self, creds, scope, filters, oos):
         """Return list[program] (normalized). `creds` is {cred_key: value}."""

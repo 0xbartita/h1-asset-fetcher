@@ -10,6 +10,8 @@ def _env_without_creds():
     for k in ("H1_USERNAME", "H1_API_TOKEN", "BUGCROWD_TOKEN",
               "INTIGRITI_TOKEN", "YESWEHACK_TOKEN", "YESWEHACK_USERNAME"):
         env.pop(k, None)
+    # Isolate saved config so these never pick up a real ~/.config credential.
+    env["H1_ASSET_FETCHER_CONFIG"] = "/nonexistent/h1af-test/config.json"
     return env
 
 

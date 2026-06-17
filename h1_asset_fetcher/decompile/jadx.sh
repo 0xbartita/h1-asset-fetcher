@@ -3,9 +3,9 @@ set -euo pipefail
 # Batch decompile all APKs with jadx
 # Output: decompiled/<package_name>/
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
+# APKS_DIR / OUT_DIR resolve against the CALLER's working directory. Do NOT cd
+# into the script's own folder — that breaks relative paths like "apks" (which
+# is exactly how the wizard invokes this).
 APKS_DIR="${APKS_DIR:-apks}"
 OUT_DIR="${OUT_DIR:-decompiled}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"

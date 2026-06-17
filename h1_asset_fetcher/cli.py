@@ -9,7 +9,7 @@ import signal
 import argparse
 from pathlib import Path
 
-from .core import log
+from .core import log, config
 from .core.identifiers import SCOPE_TYPES, SCOPE_LABELS, resolve_ios_store_links
 from .core.collect import collect_assets
 from .core.output import save_output
@@ -23,8 +23,10 @@ if sys.platform == "win32":
 
 
 def _resolve_creds(plat, args):
-    """Build {cred_key: value} from -t/-u flags, falling back to the platform's
-    env vars. Keeps each platform's credentials isolated (no H1 token bleed)."""
+    """Build {cred_key: value} for a platform. Precedence: -t/-u flags > env var
+    > saved config (the wizard's remembered credentials). Keeps each platform's
+    credentials isolated (no H1 token bleed)."""
+    saved = config.get_platform_creds(plat.name)
     creds = {}
     for c in plat.auth:
         val = ""
@@ -34,6 +36,8 @@ def _resolve_creds(plat, args):
             val = args.username
         if not val and c.key in plat.env:
             val = os.environ.get(plat.env[c.key], "")
+        if not val:
+            val = saved.get(c.key, "")
         creds[c.key] = val
     return creds
 
@@ -94,6 +98,9 @@ Get your H1 API token at: https://hackerone.com/settings/api_token/edit
                              "h=handle p=program u=store_url (default: t,a,h,u)")
     parser.add_argument("--delimiter", default="\t",
                         help="Delimiter for packages.tsv columns (default: tab; use '\\t')")
+    parser.add_argument("--forget", action="store_true",
+                        help="Delete saved credentials/preferences "
+                             "(~/.config/h1-asset-fetcher/config.json) and exit")
     return parser
 
 
@@ -181,9 +188,11 @@ def _run_cli(argv):
             continue
         seen_handles.add(h)
         info = prog_info.get(h, {})
-        name = info.get("name", a["program"])[:35]
+        # .get(k, default) only falls back when the key is ABSENT; a platform may
+        # set these to None explicitly (e.g. Intigriti submission_state), so coerce.
+        name = (info.get("name") or a["program"] or "")[:35]
         n = len(info.get("scopes", []))
-        st = info.get("submission_state", "?")
+        st = info.get("submission_state") or "?"
         sc = "\033[92m" if st == "open" else "\033[91m"
         print(f"{len(seen_handles):<4} {name:<35} {flag(info.get('fast_payments')):<17} {flag(info.get('triage_active')):<17} {flag(info.get('gold_standard_safe_harbor')):<17} {flag(info.get('allows_bounty_splitting')):<16} {sc}{st:<12}\033[0m {n}")
 
@@ -234,6 +243,10 @@ def _run_cli(argv):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    if "--forget" in argv:
+        path = config.forget()
+        log(f"Forgot saved credentials and preferences ({path})", "OK")
+        return 0
     if not argv:
         # No arguments → launch the TUI (Phase 2). Until it exists, show help.
         try:

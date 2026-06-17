@@ -33,3 +33,16 @@ def test_map_mobile_asset():
 def test_unknown_platform_raises():
     with pytest.raises(KeyError):
         get_platform("does_not_exist")
+
+
+def test_platform_filter_presets():
+    # The wizard offers only filters a platform can actually express.
+    vals = lambda name: [v for _, v in get_platform(name).filters]
+    # HackerOne & Bugcrowd support VDP.
+    assert "vdp" in vals("hackerone")
+    assert "vdp" in vals("bugcrowd")
+    # Intigriti & YesWeHack have no VDP dimension — must not offer it.
+    assert "vdp" not in vals("intigriti")
+    assert "vdp" not in vals("yeswehack")
+    # Immunefi has no filtering — a single "everything" preset.
+    assert vals("immunefi") == ["all"]

@@ -1,28 +1,28 @@
 """Immunefi scope fetcher for h1-asset-fetcher.
 
-Ported from bbscope (github.com/sw33tLie/bbscope) — pkg/platforms/immunefi.
+Originally ported from bbscope (github.com/sw33tLie/bbscope), then updated for
+Immunefi's Next.js **App Router** redesign (2026): the old ``__NEXT_DATA__``
+blob is gone. Data now ships in the React Server Components stream as a series
+of ``self.__next_f.push([1,"<escaped json>"])`` script chunks.
 
-Immunefi has NO authentication. bbscope scrapes immunefi.com:
+Immunefi has NO authentication. Flow:
 
-  1. GET https://immunefi.com/bug-bounty/  -> parse the embedded Next.js
-     payload in the ``#__NEXT_DATA__`` <script> tag. The JSON at
-     ``props.pageProps.bounties[]`` lists every program; each has an ``id``
-     (the slug) and ``is_external`` flag. External programs are skipped
-     (their scope lives on a third-party site).
-  2. For each internal program, GET
-     https://immunefi.com/bug-bounty/<id>/information/  -> parse its
-     ``#__NEXT_DATA__`` payload and read ``props.pageProps.bounty.assets[]``.
-     Every asset has a ``url`` (the raw target) and a ``type`` such as
-     ``websites_and_applications`` or ``smart_contract``.
+  1. GET https://immunefi.com/bug-bounty/  -> reassemble the RSC stream and read
+     the ``"bounties":[ ... ]`` array. Each entry has ``slug`` / ``url`` /
+     ``project`` / ``maxBounty``.
+  2. For each program, GET https://immunefi.com/bug-bounty/<slug>/information/
+     -> reassemble its RSC stream and read ``"assets":[ ... ]``. Each asset has
+     a ``url`` (raw target) and a ``type`` (e.g. ``smart_contract`` or
+     ``websites_and_applications``).
 
 Immunefi assets are overwhelmingly smart-contract / web3 with the occasional
-``websites_and_applications`` entry that points at a mobile app store listing
-or an APK/IPA. We only keep targets that map to a mobile/exe H1 asset_type;
-everything else (websites, contracts, APIs) is dropped. Programs with no
-matching assets are still returned with an empty ``scopes`` list so the caller
-never crashes.
+``websites_and_applications`` entry that points at a mobile app store listing or
+an APK/IPA. We only keep targets that map to a mobile/exe H1 asset_type;
+everything else (websites, contracts, APIs) is dropped. Programs with no matching
+assets are still returned with an empty ``scopes`` list so the caller never
+crashes.
 
-stdlib + requests only. HTML is handled with json/regex (no bs4/lxml).
+stdlib + requests only. HTML/RSC is handled with json/regex (no bs4/lxml).
 """
 
 import json
@@ -37,21 +37,9 @@ PLATFORM = "immunefi"
 PLATFORM_URL = "https://immunefi.com"
 BOUNTY_LIST_URL = PLATFORM_URL + "/bug-bounty/"
 
-# Native Immunefi asset "type" -> coarse map_mobile_asset() category hint.
-# bbscope only ever selects these two buckets; we forward both to the mapper
-# (which decides mobile/exe vs. drop based on the identifier).
-CATEGORY_FILTERS = {
-    "web": ["websites_and_applications"],
-    "contracts": ["smart_contract"],
-    "all": ["websites_and_applications", "smart_contract"],
-}
-
-# Regex to pull the embedded Next.js JSON out of the page without an HTML
-# parser. <script id="__NEXT_DATA__" type="application/json">...</script>
-_NEXT_DATA_RE = re.compile(
-    r'<script[^>]*\bid=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
-    re.DOTALL | re.IGNORECASE,
-)
+# Each RSC chunk is `self.__next_f.push([1,"<json-escaped string>"])`. We grab
+# the `[1,"..."]` array literal and json.loads it to get the decoded string.
+_RSC_CHUNK_RE = re.compile(r'self\.__next_f\.push\((\[1,".*?"\])\)', re.DOTALL)
 
 _HEADERS = {
     "Accept": "*/*",
@@ -97,45 +85,58 @@ def _get(session, url, log):
     return None
 
 
-def _extract_next_data(html):
-    """Return the parsed ``__NEXT_DATA__`` JSON object, or {} on any failure."""
-    if not html:
-        return {}
-    m = _NEXT_DATA_RE.search(html)
-    if not m:
-        return {}
-    raw = m.group(1).strip()
+def _rsc_blob(html):
+    """Reassemble the Next.js App Router RSC stream into one decoded string."""
+    parts = []
+    for m in _RSC_CHUNK_RE.finditer(html or ""):
+        try:
+            parts.append(json.loads(m.group(1))[1])
+        except (ValueError, IndexError, TypeError):
+            continue
+    return "".join(parts)
+
+
+def _balanced(s, start, open_c="[", close_c="]"):
+    """Return the substring spanning a balanced open/close pair starting at
+    ``start`` (which must index the opening bracket), or None. String-aware so
+    brackets inside JSON string values don't throw off the depth count."""
+    depth = 0
+    i = start
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == '"':
+            i += 1
+            while i < n and s[i] != '"':
+                if s[i] == "\\":
+                    i += 1
+                i += 1
+        elif c == open_c:
+            depth += 1
+        elif c == close_c:
+            depth -= 1
+            if depth == 0:
+                return s[start:i + 1]
+        i += 1
+    return None
+
+
+def _json_array_after(blob, key):
+    """Find ``"key":[ ... ]`` in the RSC blob and return the parsed list, or []."""
+    pos = blob.find(f'"{key}":')
+    if pos < 0:
+        return []
+    bracket = blob.find("[", pos)
+    if bracket < 0:
+        return []
+    raw = _balanced(blob, bracket, "[", "]")
+    if not raw:
+        return []
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _dig(obj, *keys):
-    """Safely walk a chain of dict keys; return None if anything is missing."""
-    cur = obj
-    for k in keys:
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(k)
-    return cur
-
-
-def _selected_categories(prog_filter):
-    """Map the H1-style prog_filter comma string to Immunefi category buckets.
-
-    Immunefi exposes no public/private or bbp/vdp distinction at the asset
-    level, so filter dimensions it can't express are ignored. We always scrape
-    every asset type ('all') unless the filter clearly narrows to web-only.
-    The bucket choice only affects which native asset *types* we forward to the
-    mapper — the mapper still has the final say on mobile/exe vs. drop.
-    """
-    tokens = {t.strip().lower() for t in (prog_filter or "all").split(",") if t.strip()}
-    if not tokens or "all" in tokens:
-        return CATEGORY_FILTERS["all"]
-    # No real public/private/bbp/vdp equivalent on Immunefi -> default to all.
-    return CATEGORY_FILTERS["all"]
+        return []
+    return data if isinstance(data, list) else []
 
 
 def _build_scope(asset, oos, asset_types, log):
@@ -158,8 +159,6 @@ def _build_scope(asset, oos, asset_types, log):
     # nil), so every asset we see is in-scope. When oos is False we'd keep them
     # anyway; the flag is honored for shape-parity with the H1 path.
     eligible_for_submission = True
-    if not eligible_for_submission and not oos:
-        return None
 
     # First try mapping from the identifier itself (catches play.google.com /
     # apps.apple.com / *.apk / *.ipa regardless of the coarse native type).
@@ -182,9 +181,10 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
           oos=False, log=print):
     """Fetch Immunefi programs and return mobile/exe scopes in the H1 shape.
 
-    Immunefi requires no auth, so ``token``/``username`` are ignored. Returns a
-    list of program dicts; programs with no matching mobile/exe assets come back
-    with an empty ``scopes`` list rather than being dropped.
+    Immunefi requires no auth, so ``token``/``username``/``prog_filter`` are
+    ignored (it exposes no public/private/bbp/vdp distinction). Returns a list of
+    program dicts; programs with no matching mobile/exe assets come back with an
+    empty ``scopes`` list rather than being dropped.
     """
     asset_types = tuple(asset_types or ())
     session = requests.Session()
@@ -198,54 +198,33 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
         _log(log, "Could not load Immunefi bug-bounty index", "ERR")
         return []
 
-    next_data = _extract_next_data(list_html)
-    bounties = _dig(next_data, "props", "pageProps", "bounties")
-    if not isinstance(bounties, list):
-        _log(log, "Immunefi index missing props.pageProps.bounties", "WARN")
-        bounties = []
-
-    # Honor prog_filter (best-effort) only to choose native asset buckets.
-    _selected_categories(prog_filter)
+    bounties = _json_array_after(_rsc_blob(list_html), "bounties")
+    if not bounties:
+        _log(log, "Immunefi index returned no bounties (RSC layout may have "
+                  "changed again)", "WARN")
 
     program_ids = []
     for program in bounties:
         if not isinstance(program, dict):
             continue
-        program_id = program.get("id")
-        if not isinstance(program_id, str) or not program_id:
+        slug = program.get("slug")
+        if not isinstance(slug, str) or not slug:
             continue
-        if program.get("is_external"):
-            continue  # External program: scope hosted off-site, bbscope skips.
-        program_ids.append((program_id, program.get("project") or program.get("title")))
+        rel_url = program.get("url") if isinstance(program.get("url"), str) else ""
+        detail_url = (PLATFORM_URL + rel_url) if rel_url.startswith("/") else \
+            f"{PLATFORM_URL}/bug-bounty/{slug}/information/"
+        program_ids.append((slug, program.get("project") or slug, detail_url))
 
-    _log(log, f"Found {len(program_ids)} internal Immunefi programs", "OK")
+    _log(log, f"Found {len(program_ids)} Immunefi programs", "OK")
 
     programs = []
-    for idx, (program_id, listed_name) in enumerate(program_ids, 1):
-        url = f"{PLATFORM_URL}/bug-bounty/{program_id}/information/"
+    for idx, (slug, listed_name, detail_url) in enumerate(program_ids, 1):
         time.sleep(_COURTESY_DELAY)
 
-        page_html = _get(session, url, log)
-        bounty = _dig(_extract_next_data(page_html), "props", "pageProps", "bounty")
-        if not isinstance(bounty, dict):
-            # Page renamed/empty: still emit the program with empty scopes.
-            programs.append({
-                "handle": program_id,
-                "name": (listed_name if isinstance(listed_name, str) else program_id) or program_id,
-                "platform": PLATFORM,
-                "url": url,
-                "submission_state": "open",
-                "scopes": [],
-            })
-            continue
+        page_html = _get(session, detail_url, log)
+        assets = _json_array_after(_rsc_blob(page_html or ""), "assets")
 
-        name = bounty.get("project") or bounty.get("title") or listed_name or program_id
-        if not isinstance(name, str) or not name:
-            name = program_id
-
-        assets = bounty.get("assets")
-        if not isinstance(assets, list):
-            assets = []
+        name = listed_name if isinstance(listed_name, str) and listed_name else slug
 
         scopes = []
         for asset in assets:
@@ -254,17 +233,19 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
                 scopes.append(entry)
 
         if scopes:
-            _log(log, f"[{idx}/{len(program_ids)}] {name}: {len(scopes)} mobile/exe asset(s)", "OK")
+            _log(log, f"[{idx}/{len(program_ids)}] {name}: "
+                      f"{len(scopes)} mobile/exe asset(s)", "OK")
 
         programs.append({
-            "handle": program_id,
+            "handle": slug,
             "name": name,
             "platform": PLATFORM,
-            "url": url,
+            "url": detail_url,
             "submission_state": "open",
             "scopes": scopes,
         })
 
     matched = sum(1 for p in programs if p["scopes"])
-    _log(log, f"Immunefi: {matched}/{len(programs)} programs with mobile/exe assets", "STEP")
+    _log(log, f"Immunefi: {matched}/{len(programs)} programs with mobile/exe assets",
+         "STEP")
     return programs

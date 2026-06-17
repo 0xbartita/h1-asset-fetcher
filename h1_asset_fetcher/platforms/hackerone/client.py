@@ -7,10 +7,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-from ...core import log
+from ...core import log, progress, progress_done
 from ...core.identifiers import SCOPE_TYPES
 
 H1_API_BASE = "https://api.hackerone.com/v1"
+
+# Braille spinner frames for the in-place pagination status line.
+_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class H1Session:
@@ -86,9 +89,12 @@ def fetch_programs(session, prog_filter="bbp,private"):
     all_programs = []
     url = f"{H1_API_BASE}/hackers/programs?page[size]=100"
     skipped = {"pub": 0, "vdp": 0, "bbp": 0, "priv": 0}
+    page = 0
 
     while url:
-        log(f"  Page ({len(all_programs)} kept, {skipped['pub']} pub/{skipped['vdp']} VDP skip)...", "STEP")
+        page += 1
+        progress(f"{_SPIN[page % len(_SPIN)]} Fetching programs · page {page} · "
+                 f"{len(all_programs)} kept · {sum(skipped.values())} skipped")
         data = session.get(url)
         if not data or "data" not in data:
             break
@@ -127,6 +133,7 @@ def fetch_programs(session, prog_filter="bbp,private"):
         nxt = data.get("links", {}).get("next")
         url = (f"{H1_API_BASE}{nxt}" if nxt and not nxt.startswith("http") else nxt) if nxt and nxt != url else None
 
+    progress_done()  # release the in-place line before the summary
     skip_msg = ", ".join(f"{v} {k}" for k, v in skipped.items() if v > 0) or "none"
     log(f"  Filtered [{prog_filter}]: {len(all_programs)} programs (skipped: {skip_msg})", "OK")
     return all_programs

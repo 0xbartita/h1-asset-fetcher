@@ -17,8 +17,8 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 - Multi-platform: **HackerOne** plus **Bugcrowd**, **Intigriti**, **YesWeHack**, **Immunefi** (`--platform`)
 - Filter by program type: private BBP, public BBP, VDP, or all — plus **per-asset** in-scope / bounty-eligible filtering
 - Organized output: `output/<scope>/packages.txt`, `packages.tsv`, `store_links.txt`, `packages.json`
-- Bulk APK download via [apkeep](https://github.com/EFForg/apkeep) with fallback downloaders
-- Batch decompilation with [jadx](https://github.com/skylot/jadx) and dex2jar/procyon
+- Bulk APK download via [apkeep](https://github.com/EFForg/apkeep)
+- Batch decompilation with [jadx](https://github.com/skylot/jadx)
 - One-command setup with `install.sh`
 
 
@@ -30,7 +30,7 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 ./install.sh
 ```
 
-Installs: Python deps, apkeep, jadx, apktool, dex2jar, procyon.
+Installs: Python deps, apkeep, jadx, apktool.
 
 ### Manual
 
@@ -43,9 +43,6 @@ pip install -r requirements.txt
 
 # Optional
 # - apktool:  https://apktool.org/
-# - dex2jar:  https://github.com/pxb1988/dex2jar
-# - procyon:  https://github.com/mstrobel/procyon
-# - playwright: pip install playwright && playwright install chromium
 ```
 
 ### Install the `h1-asset-fetcher` command
@@ -53,9 +50,6 @@ pip install -r requirements.txt
 ```bash
 pip install .            # or: pipx install .   → puts `h1-asset-fetcher` on your PATH
 h1-asset-fetcher --help
-
-# optional extras for the fallback downloaders:
-pip install ".[telegram,browser]"
 ```
 
 The legacy `python3 h1-asset-fetcher.py ...` still works (it's a thin shim over the package), and `python3 -m h1_asset_fetcher ...` is equivalent.
@@ -103,9 +97,9 @@ h1-asset-fetcher                 # or: python3 -m h1_asset_fetcher
 ? HackerOne username ›  0xbartita
 ? HackerOne token    ›  ••••••••••
 ? Scope                 android
-? Filter             ›  bbp,private
-? Bounty-only assets?   (y/N)
-? Include out-of-scope? (y/N)
+? Filter                Private BBP → bbp,private
+? Bounty-only assets?   (Y/n)
+? Include out-of-scope? (Y/n)
 
 ✔ 87 assets from 42 programs
 ✔ Saved output to output/android/
@@ -115,6 +109,28 @@ h1-asset-fetcher                 # or: python3 -m h1_asset_fetcher
 ❯ ◉ com.acme.app        APK   Acme Corp
   ◯ com.globex.app      APK   Globex
 ```
+
+### Remembered settings
+
+The wizard saves what you enter so you don't retype it. After the first run it
+remembers your **credentials per platform** plus your last **platform / scope /
+filter**, and on the next launch it offers:
+
+```
+? Use saved HackerOne credentials? (Y/n)
+```
+
+Just press **Enter** to reuse them, or **n** to re-enter and overwrite. To wipe
+everything (e.g. to switch accounts):
+
+```bash
+h1-asset-fetcher --forget
+```
+
+Settings live in `~/.config/h1-asset-fetcher/config.json`, written **owner-only
+(chmod 600)**. The token is stored in plaintext (same as the aws/gh CLIs) —
+protected only by file permissions, so rotate it if the machine is shared.
+Explicit `-t/-u` flags and env vars always override the saved values.
 
 ## Usage
 
@@ -137,6 +153,7 @@ python3 h1-asset-fetcher.py -u <username> -t <token> --scope <scope> [options]
 | `--delimiter` | Column delimiter for `packages.tsv` (default: tab) |
 | `-o, --output` | Output directory (default: `output/`) |
 | `--programs-file` | Reuse cached `programs_cache.json` |
+| `--forget` | Delete saved credentials/preferences (`~/.config/h1-asset-fetcher/config.json`) and exit |
 
 **Per-asset scoping:** HackerOne marks each asset individually, so a paid program can still contain out-of-scope or non-bounty assets. The fetcher reads `eligible_for_submission` / `eligible_for_bounty` per asset — out-of-scope assets are excluded from `packages.txt` (and listed in `oos_packages.txt` with `--oos`), and `-b` keeps only bounty-eligible ones.
 
@@ -181,44 +198,45 @@ Bulk APK downloader using [apkeep](https://github.com/EFForg/apkeep):
 ```bash
 python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ -w 4
 python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ --source apk-pure
+
+# --source all: try apk-pure → huawei-app-gallery → f-droid in turn per package
+# (first hit wins). Recovers some packages apk-pure doesn't carry.
+python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ --source all
 ```
+
+`--source` options: `apk-pure` (default), `all`, `huawei-app-gallery`, `f-droid`, `google-play`. Note `google-play` needs a Google account email + AAS token, so it's not part of `all`. The interactive wizard uses `--source all` automatically.
+
+#### Finishing failed downloads with Google Play
+
+When the no-auth sources can't supply some packages, the failures are written to `apks/failed_packages.txt` (+`.json`) and you're offered a **Google Play retry** of just those packages:
+
+```bash
+# Interactive: after the run, answer the [y/N] prompt; it walks you through
+# getting the AAS token, then asks for your email + token.
+
+# Non-interactive / scripted: supply creds up front to auto-retry failures
+# (or to download directly via --source google-play).
+python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ \
+    --gplay-email you@gmail.com --gplay-token 'aas_et/...'
+
+# Or via env vars (handy to keep them out of shell history):
+export APKEEP_GPLAY_EMAIL=you@gmail.com APKEEP_GPLAY_TOKEN='aas_et/...'
+
+# Skip the prompt entirely:
+python3 -m h1_asset_fetcher.download.apkeep -i ... -o apks/ --no-gplay-retry
+```
+
+**Getting an AAS token** (one-time): sign in at <https://accounts.google.com/EmbeddedSetup>. On the "Terms of Service / I Agree" consent screen, grab the `oauth_token` cookie (value starts with `oauth2_4/`) from DevTools → Application → Cookies → `accounts.google.com` — if it isn't there yet, click **I Agree** and it appears at that step. That cookie is the short-lived, single-use **OAuth** token. Exchange it **once** for the long-lived **AAS** token (downloads use the AAS token only): `apkeep -e you@gmail.com --oauth-token 'oauth2_4/…' .` prints an `aas_et/…` token. Paste that `aas_et/…` token into the prompt / `--gplay-token`, and save it in `APKEEP_GPLAY_EMAIL`/`APKEEP_GPLAY_TOKEN` to reuse it. The on-screen prompt shows these steps too. The wizard offers the same Google Play retry via its own questionary prompts.
+
+> Pasting the `oauth2_4/…` value as the token fails with `Could not log in to Google Play … Invalid payload` — that's the OAuth-vs-AAS mix-up. The tool detects an `oauth2_4/…` value and tells you to exchange it first.
 
 <img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/c4f5732d-4836-4660-a7ea-fb645a8334e5" />
-
-Fallbacks for packages apkeep can't fetch:
-
-```bash
-# headless Chromium (bypasses Cloudflare)  — needs the [browser] extra
-pip install ".[browser]" && playwright install chromium
-python3 -m h1_asset_fetcher.download.browser -i failed_packages.txt -o apks/
-
-# pure-HTTP scraper
-python3 -m h1_asset_fetcher.download.web -i failed_packages.txt -o apks/
-```
-
-Telegram bot downloader via [@RevEngiBot](https://t.me/RevEngiBot) — needs the `[telegram]` extra. Set your Telegram API credentials (get an `api_id`/`api_hash` at [my.telegram.org](https://my.telegram.org)), run the one-time login, then download:
-
-```bash
-pip install ".[telegram]"
-export TELEGRAM_API_ID=your_api_id
-export TELEGRAM_API_HASH=your_api_hash
-export TELEGRAM_PHONE=+1234567890   # optional; prompted interactively if unset
-
-# One-time login — creates the ~/.revengi_session session file
-python3 -m h1_asset_fetcher.download.login
-
-# Then download (reuses the session)
-python3 -m h1_asset_fetcher.download.telegram_bot -i failed_packages.txt -o apks/
-```
 
 ### Decompile — `h1_asset_fetcher/decompile/`
 
 ```bash
-# jadx (thorough, single-threaded)
+# jadx (thorough)
 APKS_DIR=apks OUT_DIR=decompiled bash h1_asset_fetcher/decompile/jadx.sh
-
-# dex2jar + procyon (fast, parallel)
-bash h1_asset_fetcher/decompile/fast.sh
 ```
 
 <img width="2012" height="354" alt="image" src="https://github.com/user-attachments/assets/55468c4d-817d-4975-adc3-ee1b8d4272b6" />
@@ -237,12 +255,13 @@ bash h1_asset_fetcher/decompile/fast.sh
 
 ```
 h1_asset_fetcher/
-  cli.py              # argparse entry; no args → TUI (coming), flags → headless
-  core/               # platform-agnostic: identifiers, output
+  cli.py              # argparse entry; no args → interactive wizard, flags → headless
+  tui/                # the interactive questionary wizard
+  core/               # platform-agnostic: identifiers, output, config
   platforms/          # one folder per platform (plugin registry)
     hackerone/ bugcrowd/ intigriti/ yeswehack/ immunefi/
-  download/           # apkeep, browser, web, telegram_bot, login
-  decompile/          # jadx.sh, fast.sh
+  download/           # apkeep
+  decompile/          # jadx.sh
 ```
 
 Adding a platform = one new folder under `platforms/` with a `Platform` subclass; the CLI picks it up automatically.

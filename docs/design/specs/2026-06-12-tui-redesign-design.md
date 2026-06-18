@@ -2,7 +2,7 @@
 
 - **Date:** 2026-06-12
 - **Status:** Approved design (pending spec review)
-- **Author:** 0xbartita (with Claude)
+- **Author:** 0xbartita
 
 ## 1. Summary
 

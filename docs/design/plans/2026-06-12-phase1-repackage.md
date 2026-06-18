@@ -1,7 +1,5 @@
 # Phase 1: Repackage + Plugin Registry Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Turn the `h1-asset-fetcher.py` monolith into an importable `h1_asset_fetcher` package with a pluggable platform registry and an installable `h1-asset-fetcher` command — with byte-identical CLI behavior — so the Phase 2 Textual TUI has a core to call into.
 
 **Architecture:** Extract the script's logic into a `core/` library (pure functions: identifiers, output, HTTP session) plus a `platforms/` package built around a `Platform`/`Cred`/`register` registry. A thin `cli.py` wires argparse to the registry; the old `h1-asset-fetcher.py` becomes a shim. A characterization test pins the current CLI output and must keep passing through every task.

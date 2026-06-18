@@ -24,7 +24,20 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 
 ## Installation
 
-### Automatic
+### Quick install (pipx)
+
+One command — installs the tool in an isolated environment and puts the `h1-asset-fetcher` command on your PATH:
+
+```bash
+pipx install git+https://github.com/0xbartita/h1-asset-fetcher.git
+h1-asset-fetcher        # launches the interactive wizard
+```
+
+Plain pip works too: `pip install git+https://github.com/0xbartita/h1-asset-fetcher.git`. No pipx? `python3 -m pip install --user pipx && pipx ensurepath`, then restart your shell.
+
+> This installs the fetcher + interactive wizard. APK **download** and **decompile** additionally need `apkeep`, `jadx` (and optionally `apktool`) — run `./install.sh` to grab those, or install them manually (see [Manual](#manual)).
+
+### Automatic (everything, including apkeep / jadx / apktool)
 
 ```bash
 ./install.sh

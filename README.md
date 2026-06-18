@@ -76,13 +76,24 @@ python3 h1-asset-fetcher.py -u <username> -t <token> --scope all --filter all
 
 ## Interactive wizard
 
-Run with **no arguments** for a clean interactive prompt flow — it asks you through
-platform → credentials → scope → fetch → download, inline in your terminal (no full-screen
+The easiest way to use the tool — run the command with **no arguments** and it walks you
+through the whole pipeline, one question at a time, inline in your terminal (no full-screen
 takeover):
 
 ```bash
 h1-asset-fetcher                 # or: python3 -m h1_asset_fetcher
 ```
+
+It guides you through, in order:
+
+1. **Platform** — HackerOne, Bugcrowd, Intigriti, YesWeHack, or Immunefi
+2. **Credentials** — token (and username where needed) for that platform; reused on later runs
+3. **Scope & filters** — `android` / `ios` / `exe` / `all`, program filter, bounty-only, out-of-scope
+4. **Fetch** — pulls in-scope assets and saves them to `output/<scope>/`
+5. **Download** — pick which assets to grab; APKs are fetched via apkeep (apk-pure → huawei → f-droid)
+6. **Decompile** — optionally run jadx on the downloaded APKs
+
+Each step has a sensible default — press **Enter** to accept it, or **Esc/Ctrl-C** to quit.
 
 ```
   h1-asset-fetcher

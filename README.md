@@ -206,31 +206,9 @@ python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o ap
 
 `--source` options: `apk-pure` (default), `all`, `huawei-app-gallery`, `f-droid`, `google-play`. Note `google-play` needs a Google account email + AAS token, so it's not part of `all`. The interactive wizard uses `--source all` automatically.
 
-#### Finishing failed downloads with Google Play
+#### Google Play (`--source google-play`)
 
-> **Requires apkeep ≥ 1.0.0** — and is **auto-disabled below that** (you'll see a "Google Play retry is disabled" message instead of failed attempts). Earlier versions (e.g. 0.18.0) fail the OAuth→AAS exchange with `was not able to retrieve AAS token with the provided OAuth token` because of a Google auth-flow change — fixed upstream in 1.0.0 ([apkeep#231](https://github.com/EFForg/apkeep/issues/231)). Check with `apkeep --version`; upgrade by removing `~/.local/bin/apkeep` and re-running `install.sh` (it fetches the latest), or `cargo install apkeep`. The retry re-enables automatically once apkeep is new enough.
-
-When the no-auth sources can't supply some packages, the failures are written to `apks/failed_packages.txt` (+`.json`) and you're offered a **Google Play retry** of just those packages:
-
-```bash
-# Interactive: after the run, answer the [y/N] prompt; it walks you through
-# getting the AAS token, then asks for your email + token.
-
-# Non-interactive / scripted: supply creds up front to auto-retry failures
-# (or to download directly via --source google-play).
-python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o apks/ \
-    --gplay-email you@gmail.com --gplay-token 'aas_et/...'
-
-# Or via env vars (handy to keep them out of shell history):
-export APKEEP_GPLAY_EMAIL=you@gmail.com APKEEP_GPLAY_TOKEN='aas_et/...'
-
-# Skip the prompt entirely:
-python3 -m h1_asset_fetcher.download.apkeep -i ... -o apks/ --no-gplay-retry
-```
-
-**Getting an AAS token** (one-time): open DevTools on the **Network** tab, then sign in at <https://accounts.google.com/EmbeddedSetup>. If a "Terms of Service" dialog appears, click **I agree**. In the Network tab, select the **last request to `accounts.google.com`**, open its **Cookies** sub-tab, and read the **response cookie `oauth_token`** (value starts with `oauth2_4/`). Read it here — the Application → Cookies panel often shows a stale value that fails the exchange. That cookie is the short-lived, single-use **OAuth** token. Exchange it **once** for the long-lived **AAS** token (downloads use the AAS token only): `apkeep -e you@gmail.com --oauth-token 'oauth2_4/…' .` prints an `aas_et/…` token. Paste that `aas_et/…` token into the prompt / `--gplay-token`, and save it in `APKEEP_GPLAY_EMAIL`/`APKEEP_GPLAY_TOKEN` to reuse it. The on-screen prompt shows these steps too. The wizard offers the same Google Play retry via its own questionary prompts.
-
-> Pasting the `oauth2_4/…` value as the token fails with `Could not log in to Google Play … Invalid payload` — that's the OAuth-vs-AAS mix-up. The tool detects an `oauth2_4/…` value and tells you to exchange it first.
+Needs a Google account email + AAS token (`--gplay-email`/`--gplay-token`, or `APKEEP_GPLAY_EMAIL`/`APKEEP_GPLAY_TOKEN`) — see [apkeep's Google Play guide](https://github.com/EFForg/apkeep/blob/master/USAGE-google-play.md) to obtain one. After a normal run, the no-auth failures saved to `apks/failed_packages.txt` can be retried via Google Play. Requires apkeep ≥ 1.0.0.
 
 <img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/c4f5732d-4836-4660-a7ea-fb645a8334e5" />
 

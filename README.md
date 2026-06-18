@@ -31,6 +31,9 @@ Just run it with **no arguments** — it walks you through the whole pipeline, o
 h1-asset-fetcher
 ```
 
+<img width="1499" height="954" alt="image" src="https://github.com/user-attachments/assets/a60b13d2-e784-4323-aaa7-a908aecc0c3c" />
+
+
 It guides you through, in order:
 
 1. **Platform** — HackerOne, Bugcrowd, Intigriti, YesWeHack, or Immunefi
@@ -70,11 +73,6 @@ Press **Enter** to accept each default, or **Esc / Ctrl-C** to quit.
 
 The wizard remembers your credentials and last platform/scope/filter, so the next run just asks **"Use saved credentials? (Y/n)"** — press Enter to reuse. To wipe saved settings: `h1-asset-fetcher --forget`.
 
-<img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/b133a0af-b0c5-4d74-8061-98799dd059a7" />
-
-<img width="3248" height="1974" alt="image" src="https://github.com/user-attachments/assets/c4f5732d-4836-4660-a7ea-fb645a8334e5" />
-
-<img width="2012" height="354" alt="image" src="https://github.com/user-attachments/assets/55468c4d-817d-4975-adc3-ee1b8d4272b6" />
 
 ## License
 

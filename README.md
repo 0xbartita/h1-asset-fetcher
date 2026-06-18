@@ -1,7 +1,6 @@
 # H1 Asset Fetcher
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1-blue.svg" alt="Version 1.1">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg" alt="Platform">
@@ -21,26 +20,6 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 - Bulk APK download via [apkeep](https://github.com/EFForg/apkeep)
 - Batch decompilation with [jadx](https://github.com/skylot/jadx)
 - One-command setup with `install.sh`
-
-
-## What's new in v1.1
-
-- **Inline interactive wizard** — a `questionary`-based guided flow (platform → credentials → fetch → download → decompile) that runs inline in your terminal, replacing the old full-screen TUI. It remembers your last settings and only offers saved credentials when a token is actually stored.
-- **Multi-platform plugins** — Bugcrowd, Intigriti, YesWeHack, and Immunefi alongside HackerOne via a pluggable registry (`--platform`); the project is now an importable `h1_asset_fetcher` package.
-- **Per-asset filtering** — in-scope / bounty-eligibility gating, `--oos` listing of out-of-scope assets, and an annotated `packages.tsv`.
-- **Multi-source APK download** — `--source all` tries apk-pure → huawei-app-gallery → f-droid per package (first hit wins), with a per-package failure report.
-- **Google Play retry** — finish the leftover failures via Google Play with an AAS token (auto-disabled on apkeep < 1.0.0, where the OAuth→AAS exchange is broken — [apkeep#231](https://github.com/EFForg/apkeep/issues/231) — and re-enabled automatically once apkeep is upgraded).
-- **Cleaner output** — HackerOne pagination renders as a single self-updating progress line instead of a scrolling wall of log lines.
-
-
-## Screenshots
-
-> _Attach screenshots here._
-
-<!-- Replace these placeholders with your uploaded image URLs:
-<p align="center"><img src="IMAGE_URL" alt="Interactive wizard" width="800"></p>
-<p align="center"><img src="IMAGE_URL" alt="APK download + Google Play retry" width="800"></p>
--->
 
 
 ## Installation

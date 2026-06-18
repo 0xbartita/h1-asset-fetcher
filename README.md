@@ -1,6 +1,7 @@
 # H1 Asset Fetcher
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-1.1-blue.svg" alt="Version 1.1">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg" alt="Platform">
@@ -20,6 +21,26 @@ Built for bug bounty hunters who want to audit mobile apps at scale.
 - Bulk APK download via [apkeep](https://github.com/EFForg/apkeep)
 - Batch decompilation with [jadx](https://github.com/skylot/jadx)
 - One-command setup with `install.sh`
+
+
+## What's new in v1.1
+
+- **Inline interactive wizard** — a `questionary`-based guided flow (platform → credentials → fetch → download → decompile) that runs inline in your terminal, replacing the old full-screen TUI. It remembers your last settings and only offers saved credentials when a token is actually stored.
+- **Multi-platform plugins** — Bugcrowd, Intigriti, YesWeHack, and Immunefi alongside HackerOne via a pluggable registry (`--platform`); the project is now an importable `h1_asset_fetcher` package.
+- **Per-asset filtering** — in-scope / bounty-eligibility gating, `--oos` listing of out-of-scope assets, and an annotated `packages.tsv`.
+- **Multi-source APK download** — `--source all` tries apk-pure → huawei-app-gallery → f-droid per package (first hit wins), with a per-package failure report.
+- **Google Play retry** — finish the leftover failures via Google Play with an AAS token (auto-disabled on apkeep < 1.0.0, where the OAuth→AAS exchange is broken — [apkeep#231](https://github.com/EFForg/apkeep/issues/231) — and re-enabled automatically once apkeep is upgraded).
+- **Cleaner output** — HackerOne pagination renders as a single self-updating progress line instead of a scrolling wall of log lines.
+
+
+## Screenshots
+
+> _Attach screenshots here._
+
+<!-- Replace these placeholders with your uploaded image URLs:
+<p align="center"><img src="IMAGE_URL" alt="Interactive wizard" width="800"></p>
+<p align="center"><img src="IMAGE_URL" alt="APK download + Google Play retry" width="800"></p>
+-->
 
 
 ## Installation
@@ -208,6 +229,8 @@ python3 -m h1_asset_fetcher.download.apkeep -i output/android/packages.txt -o ap
 
 #### Finishing failed downloads with Google Play
 
+> **Requires apkeep ≥ 1.0.0** — and is **auto-disabled below that** (you'll see a "Google Play retry is disabled" message instead of failed attempts). Earlier versions (e.g. 0.18.0) fail the OAuth→AAS exchange with `was not able to retrieve AAS token with the provided OAuth token` because of a Google auth-flow change — fixed upstream in 1.0.0 ([apkeep#231](https://github.com/EFForg/apkeep/issues/231)). Check with `apkeep --version`; upgrade by removing `~/.local/bin/apkeep` and re-running `install.sh` (it fetches the latest), or `cargo install apkeep`. The retry re-enables automatically once apkeep is new enough.
+
 When the no-auth sources can't supply some packages, the failures are written to `apks/failed_packages.txt` (+`.json`) and you're offered a **Google Play retry** of just those packages:
 
 ```bash
@@ -226,7 +249,7 @@ export APKEEP_GPLAY_EMAIL=you@gmail.com APKEEP_GPLAY_TOKEN='aas_et/...'
 python3 -m h1_asset_fetcher.download.apkeep -i ... -o apks/ --no-gplay-retry
 ```
 
-**Getting an AAS token** (one-time): sign in at <https://accounts.google.com/EmbeddedSetup>. On the "Terms of Service / I Agree" consent screen, grab the `oauth_token` cookie (value starts with `oauth2_4/`) from DevTools → Application → Cookies → `accounts.google.com` — if it isn't there yet, click **I Agree** and it appears at that step. That cookie is the short-lived, single-use **OAuth** token. Exchange it **once** for the long-lived **AAS** token (downloads use the AAS token only): `apkeep -e you@gmail.com --oauth-token 'oauth2_4/…' .` prints an `aas_et/…` token. Paste that `aas_et/…` token into the prompt / `--gplay-token`, and save it in `APKEEP_GPLAY_EMAIL`/`APKEEP_GPLAY_TOKEN` to reuse it. The on-screen prompt shows these steps too. The wizard offers the same Google Play retry via its own questionary prompts.
+**Getting an AAS token** (one-time): open DevTools on the **Network** tab, then sign in at <https://accounts.google.com/EmbeddedSetup>. If a "Terms of Service" dialog appears, click **I agree**. In the Network tab, select the **last request to `accounts.google.com`**, open its **Cookies** sub-tab, and read the **response cookie `oauth_token`** (value starts with `oauth2_4/`). Read it here — the Application → Cookies panel often shows a stale value that fails the exchange. That cookie is the short-lived, single-use **OAuth** token. Exchange it **once** for the long-lived **AAS** token (downloads use the AAS token only): `apkeep -e you@gmail.com --oauth-token 'oauth2_4/…' .` prints an `aas_et/…` token. Paste that `aas_et/…` token into the prompt / `--gplay-token`, and save it in `APKEEP_GPLAY_EMAIL`/`APKEEP_GPLAY_TOKEN` to reuse it. The on-screen prompt shows these steps too. The wizard offers the same Google Play retry via its own questionary prompts.
 
 > Pasting the `oauth2_4/…` value as the token fails with `Could not log in to Google Play … Invalid payload` — that's the OAuth-vs-AAS mix-up. The tool detects an `oauth2_4/…` value and tells you to exchange it first.
 

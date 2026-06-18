@@ -22,10 +22,16 @@ def test_asset_choice_format():
     assert "com.x" in s and "APK" in s and "Acme" in s
 
 
+def _force_gplay_supported(monkeypatch, supported):
+    from h1_asset_fetcher.download import apkeep as apkmod
+    monkeypatch.setattr(apkmod, "gplay_supported", lambda b=None: supported)
+
+
 def test_gplay_retry_rejects_oauth_token_without_spawning(monkeypatch, tmp_path):
     """Pasting an oauth2_4/… value in the wizard must be refused up front — not
     handed to a doomed apkeep subprocess."""
     from h1_asset_fetcher.tui import app as appmod
+    _force_gplay_supported(monkeypatch, True)
     apks = tmp_path / "apks"
     apks.mkdir()
     (apks / "failed_packages.txt").write_text("com.x\n")
@@ -39,6 +45,7 @@ def test_gplay_retry_rejects_oauth_token_without_spawning(monkeypatch, tmp_path)
 
 def test_gplay_retry_runs_with_aas_token(monkeypatch, tmp_path):
     from h1_asset_fetcher.tui import app as appmod
+    _force_gplay_supported(monkeypatch, True)
     apks = tmp_path / "apks"
     apks.mkdir()
     (apks / "failed_packages.txt").write_text("com.x\n")
@@ -51,6 +58,22 @@ def test_gplay_retry_runs_with_aas_token(monkeypatch, tmp_path):
     argv = argvs[0]
     assert "--source" in argv and "google-play" in argv
     assert "aas_et/good" in argv
+
+
+def test_gplay_retry_disabled_on_old_apkeep(monkeypatch, tmp_path):
+    """When apkeep is too old, the wizard must not prompt or spawn anything."""
+    from h1_asset_fetcher.tui import app as appmod
+    _force_gplay_supported(monkeypatch, False)
+    apks = tmp_path / "apks"
+    apks.mkdir()
+    (apks / "failed_packages.txt").write_text("com.x\n")
+    asked = []
+    monkeypatch.setattr(appmod, "_ask", lambda q: asked.append(q))
+    calls = []
+    monkeypatch.setattr(appmod.subprocess, "run", lambda *a, **k: calls.append(a))
+    appmod._gplay_retry(str(apks))
+    assert asked == []   # no prompt
+    assert calls == []   # no subprocess
 
 
 def test_offer_saved_creds_only_when_token_present():

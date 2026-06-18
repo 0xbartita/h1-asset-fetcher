@@ -246,12 +246,17 @@ def _download(packages):
 
 def _gplay_retry(apks_dir):
     """If the download left failures, offer to finish them via Google Play."""
-    from ..download.apkeep import GPLAY_TOKEN_HELP, is_oauth_token, _gplay_oauth_hint
+    from ..download.apkeep import (GPLAY_TOKEN_HELP, is_oauth_token,
+                                   _gplay_oauth_hint, gplay_supported, find_apkeep,
+                                   GPLAY_DISABLED_MSG)
     failed_file = os.path.join(apks_dir, "failed_packages.txt")
     if not os.path.isfile(failed_file):
         return
     failed = [p for p in open(failed_file).read().splitlines() if p.strip()]
     if not failed:
+        return
+    if not gplay_supported(find_apkeep()):
+        log(GPLAY_DISABLED_MSG, "WARN")
         return
     if not _ask(questionary.confirm(
             f"Retry {len(failed)} failed package(s) via Google Play?",

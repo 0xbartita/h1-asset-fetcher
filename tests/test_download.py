@@ -83,6 +83,40 @@ def test_resolve_creds_strips_whitespace():
     assert apkeep.resolve_gplay_creds("  a@x ", " tok ", {}) == ("a@x", "tok")
 
 
+# --- apkeep version gate (Google Play needs >= 1.0.0) ----------------------
+
+def test_parse_apkeep_version():
+    assert apkeep.parse_apkeep_version("apkeep 0.18.0") == (0, 18, 0)
+    assert apkeep.parse_apkeep_version("apkeep 1.0.0") == (1, 0, 0)
+    assert apkeep.parse_apkeep_version("apkeep 1.2.10\n") == (1, 2, 10)
+    assert apkeep.parse_apkeep_version("not a version") is None
+
+
+def test_gplay_supported_requires_1_0_0(monkeypatch):
+    monkeypatch.setattr(apkeep, "apkeep_version", lambda b: (0, 18, 0))
+    assert apkeep.gplay_supported("apkeep") is False
+    monkeypatch.setattr(apkeep, "apkeep_version", lambda b: (1, 0, 0))
+    assert apkeep.gplay_supported("apkeep") is True
+    monkeypatch.setattr(apkeep, "apkeep_version", lambda b: (1, 3, 2))
+    assert apkeep.gplay_supported("apkeep") is True
+    monkeypatch.setattr(apkeep, "apkeep_version", lambda b: None)   # unknown -> blocked
+    assert apkeep.gplay_supported("apkeep") is False
+
+
+def test_gplay_retry_skipped_on_old_apkeep(monkeypatch):
+    """On apkeep < 1.0.0 the retry is disabled: it neither offers nor runs."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(apkeep, "gplay_supported", lambda b: False)
+    called = {"offer": False, "run": False}
+    monkeypatch.setattr(apkeep, "offer_gplay_retry", lambda *a, **k: called.__setitem__("offer", True))
+    monkeypatch.setattr(apkeep, "run_downloads", lambda *a, **k: called.__setitem__("run", True) or ([], []))
+    failed = [{"package": "com.x", "program": "P", "reason": "r"}]
+    args = SimpleNamespace(workers=4, sleep=0, outdir="apks")
+    out = apkeep._gplay_retry("apkeep", failed, args, ("e@x", "aas_et/t"), [])
+    assert out is failed
+    assert called == {"offer": False, "run": False}
+
+
 # --- GPLAY_TOKEN_HELP ------------------------------------------------------
 
 def test_help_text_explains_how_to_get_token():

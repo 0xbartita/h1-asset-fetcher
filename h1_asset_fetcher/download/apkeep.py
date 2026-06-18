@@ -11,7 +11,7 @@ Usage:
   python3 -m h1_asset_fetcher.download.apkeep -i packages_list.txt -o apks/ --source apk-pure
 """
 
-import sys, json, os, argparse, subprocess, signal, time, threading, getpass
+import sys, json, os, re, argparse, subprocess, signal, time, threading, getpass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -80,26 +80,26 @@ def _downloaded_files(pkg_dir):
 GPLAY_TOKEN_HELP = """\
   How to get a Google Play AAS token (one-time setup):
 
-    1. Open a browser (incognito recommended) and visit:
+    1. Open a browser, open DevTools (F12) on its NETWORK tab, then visit:
          https://accounts.google.com/EmbeddedSetup
     2. Sign in with the Google account you want to download as.
-    3. You'll reach a "Google Terms of Service / I Agree" consent screen.
-       Open DevTools (F12) -> Application/Storage -> Cookies ->
-       https://accounts.google.com and find the "oauth_token" cookie
-       (value starts with "oauth2_4/"). If it isn't there yet, click
-       "I Agree" — it shows up at that consent step.
-    4. Copy that "oauth_token" value (oauth2_4/…). It is single-use and
-       expires within minutes, so use it right away in the next step.
-    5. Exchange it ONCE for a long-lived AAS token (downloads use the AAS
-       token only):
+    3. If a "Google Terms of Service" dialog appears, click "I agree"
+       (there may be a short delay afterwards).
+    4. In the Network tab, select the LAST request to accounts.google.com,
+       open its "Cookies" sub-tab, and read the RESPONSE cookie "oauth_token"
+       (value starts with "oauth2_4/"). IMPORTANT: read it here, in Network ->
+       response cookies — the Application/Storage -> Cookies panel often shows
+       a stale value that fails the exchange.
+    5. Copy that "oauth_token" value. It is single-use, so exchange it right
+       away for a long-lived AAS token (downloads use the AAS token only):
          apkeep -e you@gmail.com --oauth-token 'oauth2_4/<paste>' .
-       apkeep prints an "aas_et/…" token — that is your AAS token.
+       apkeep prints an "AAS Token: aas_et/…" line — that token is your AAS token.
     6. Paste your email + the "aas_et/…" AAS token below. It is reusable, so
        save it: set APKEEP_GPLAY_EMAIL / APKEEP_GPLAY_TOKEN to skip this
        prompt next time. (Do NOT paste the oauth2_4/… value here — that's
         the OAuth token and will fail with "Invalid payload".)
 
-  Details: https://github.com/EFForg/apkeep/blob/master/USAGE.md
+  Details: https://github.com/EFForg/apkeep/blob/master/USAGE-google-play.md
 """
 
 
@@ -134,6 +134,39 @@ def resolve_gplay_creds(email_arg="", token_arg="", env=None):
     email = (email_arg or env.get("APKEEP_GPLAY_EMAIL", "")).strip()
     token = (token_arg or env.get("APKEEP_GPLAY_TOKEN", "")).strip()
     return email, token
+
+
+# Google Play auth (OAuth->AAS exchange + download) is broken in apkeep < 1.0.0
+# due to a Google auth-flow change; the fix shipped in 1.0.0 (see apkeep#231).
+# We gate the whole Google Play retry on this so it's unusable until apkeep is
+# upgraded, then auto-enables.
+GPLAY_MIN_APKEEP = (1, 0, 0)
+GPLAY_DISABLED_MSG = (
+    "Google Play retry is disabled: it needs apkeep >= 1.0.0 (older versions "
+    "fail the OAuth->AAS exchange — apkeep#231). Upgrade apkeep to enable it.")
+
+
+def parse_apkeep_version(text):
+    """Parse 'apkeep 1.0.0' -> (1, 0, 0). Returns None if unparseable."""
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def apkeep_version(apkeep_bin):
+    """Best-effort (major, minor, patch) of the apkeep binary, or None."""
+    try:
+        out = subprocess.run([apkeep_bin, "--version"], capture_output=True,
+                             text=True, timeout=10).stdout
+        return parse_apkeep_version(out)
+    except Exception:
+        return None
+
+
+def gplay_supported(apkeep_bin):
+    """True only if apkeep is new enough for a working Google Play flow. Unknown
+    version => blocked (conservative: the feature is broken on the old version)."""
+    v = apkeep_version(apkeep_bin)
+    return v is not None and v >= GPLAY_MIN_APKEEP
 
 
 def is_oauth_token(token):
@@ -372,14 +405,18 @@ def main():
     # Google Play creds (flags > env). Forwarded to the primary pass too, so a
     # direct `--source google-play` works, and reused for the retry offer.
     gplay = resolve_gplay_creds(args.gplay_email, args.gplay_token)
-    if "google-play" in sources and not (gplay[0] and gplay[1]):
-        log("google-play needs --gplay-email/--gplay-token (or APKEEP_GPLAY_* "
-            "env vars) — those downloads will fail without them.", "WARN")
-    elif "google-play" in sources and is_oauth_token(gplay[1]):
-        log("google-play token is an OAuth token, not an AAS token — refusing "
-            "(every download would fail with 'Invalid payload').", "ERR")
-        print(_gplay_oauth_hint(gplay[0]))
-        sys.exit(1)
+    if "google-play" in sources:
+        if not gplay_supported(apkeep_bin):
+            log(GPLAY_DISABLED_MSG, "ERR")
+            sys.exit(1)
+        if not (gplay[0] and gplay[1]):
+            log("google-play needs --gplay-email/--gplay-token (or APKEEP_GPLAY_* "
+                "env vars) — those downloads will fail without them.", "WARN")
+        elif is_oauth_token(gplay[1]):
+            log("google-play token is an OAuth token, not an AAS token — refusing "
+                "(every download would fail with 'Invalid payload').", "ERR")
+            print(_gplay_oauth_hint(gplay[0]))
+            sys.exit(1)
 
     # Download
     start = time.time()
@@ -415,6 +452,9 @@ def _gplay_retry(apkeep_bin, failed, args, gplay, succeeded):
     """Auto-run (creds pre-supplied) or interactively offer a Google Play retry
     of the failed packages. Extends `succeeded` in place with any recoveries and
     returns the still-failing list (the caller prints/persists the final state)."""
+    if not gplay_supported(apkeep_bin):
+        log(GPLAY_DISABLED_MSG, "WARN")
+        return failed
     email, token = gplay
     if email and token and is_oauth_token(token):
         log("Google Play token looks like an OAuth token, not an AAS token:", "ERR")

@@ -76,6 +76,27 @@ def test_gplay_retry_disabled_on_old_apkeep(monkeypatch, tmp_path):
     assert calls == []   # no subprocess
 
 
+def test_apk_assets_filters_to_android_only():
+    """apkeep only downloads Android APKs, so the download step must skip
+    iOS / exe / Windows assets (feeding those to apkeep fails on every one)."""
+    from h1_asset_fetcher.tui import app as appmod
+    vp = [
+        {"package": "com.a", "asset_type": "GOOGLE_PLAY_APP_ID"},
+        {"package": "com.b", "asset_type": "OTHER_APK"},
+        {"package": "Bitvise SSH Server", "asset_type": "DOWNLOADABLE_EXECUTABLES"},
+        {"package": "123456789", "asset_type": "APPLE_STORE_APP_ID"},
+        {"package": "9wzdncrfj0gd", "asset_type": "WINDOWS_APP_STORE_APP_ID"},
+    ]
+    assert [a["package"] for a in appmod._apk_assets(vp)] == ["com.a", "com.b"]
+
+
+def test_apk_assets_empty_for_exe_scope():
+    from h1_asset_fetcher.tui import app as appmod
+    vp = [{"package": "x.exe", "asset_type": "DOWNLOADABLE_EXECUTABLES"},
+          {"package": "9wz", "asset_type": "WINDOWS_APP_STORE_APP_ID"}]
+    assert appmod._apk_assets(vp) == []
+
+
 def test_offer_saved_creds_only_when_token_present():
     """The 'Use saved credentials?' shortcut must appear only when the token is
     actually saved — not when only a non-secret (e.g. username) was persisted."""

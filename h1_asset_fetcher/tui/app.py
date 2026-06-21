@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from ..platforms import all_platforms, get_platform, PlatformAuthError
 from ..core import log, config
-from ..core.identifiers import resolve_ios_store_links
+from ..core.identifiers import resolve_ios_store_links, SCOPE_TYPES
 from ..core.collect import collect_assets
 from ..core.output import save_output
 
@@ -23,6 +23,16 @@ try:
 except ImportError:  # pragma: no cover - exercised only without the dep
     questionary = None
     Choice = None
+
+# apkeep only downloads Android APKs — iOS / exe / Windows assets can't go
+# through it (they're saved to the output for manual download instead).
+APK_ASSET_TYPES = set(SCOPE_TYPES["android"])
+
+
+def _apk_assets(valid_packages):
+    """The subset of fetched assets apkeep can actually download (Android)."""
+    return [a for a in valid_packages if a.get("asset_type") in APK_ASSET_TYPES]
+
 
 ASSET_LABELS = {
     "GOOGLE_PLAY_APP_ID": "PlayStore", "OTHER_APK": "APK",
@@ -210,10 +220,16 @@ def run():
     log(f"Saved output to {outdir}/", "OK")
     print()
 
-    # 6. Download
-    if not _ask(questionary.confirm("Download APKs now?", default=True, style=STYLE)):
+    # 6. Download — apkeep only fetches Android APKs, so offer only those.
+    apk_assets = _apk_assets(vp)
+    if not apk_assets:
+        log("No Android assets to download — apkeep only fetches APKs. "
+            "iOS / exe / Windows assets are saved in the output for manual download.", "INFO")
         return
-    choices = [Choice(_asset_choice(a), value=a["package"], checked=True) for a in vp]
+    if not _ask(questionary.confirm(
+            f"Download {len(apk_assets)} APK(s) now?", default=True, style=STYLE)):
+        return
+    choices = [Choice(_asset_choice(a), value=a["package"], checked=True) for a in apk_assets]
     selected = _ask(questionary.checkbox(
         "Select assets to download", choices=choices, style=STYLE))
     if not selected:

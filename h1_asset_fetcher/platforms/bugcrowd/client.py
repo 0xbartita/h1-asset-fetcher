@@ -307,7 +307,10 @@ def _scope_from_engagement(session, brief_url, log):
     Each target is a dict: {name, uri, category}.
     """
     resp = _get(session, BASE_URL + brief_url, log, label="brief " + brief_url)
-    if resp is None or resp.status_code == 404:
+    if resp is None:
+        log(f"  skipped {brief_url}: scope fetch failed", "WARN")
+        return [], []
+    if resp.status_code == 404:
         return [], []
 
     endpoints = _extract_data_api_endpoints(resp.text)
@@ -364,7 +367,10 @@ def _scope_from_target_groups(session, brief_url, log):
     program_url = BASE_URL + "/" + brief_url.lstrip("/")
     resp = _get(session, program_url + "/target_groups", log,
                 label="target_groups " + brief_url)
-    if resp is None or resp.status_code == 404:
+    if resp is None:
+        log(f"  skipped {brief_url}: scope fetch failed", "WARN")
+        return [], []
+    if resp.status_code == 404:
         return [], []
 
     data = _json(resp)

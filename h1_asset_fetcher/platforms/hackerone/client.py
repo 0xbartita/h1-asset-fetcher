@@ -26,7 +26,15 @@ class H1Session:
         self._lock = threading.Lock()
         self._last_request = 0
 
-    def get(self, url, retries=3):
+    def get(self, url, retries=3, label=None):
+        """Rate-limited GET with retries. Returns parsed JSON, or None on failure.
+
+        `label` is a human name for what's being fetched (e.g. "scopes for acme")
+        so any message says what was affected. Transient errors (connection
+        reset / timeout) are retried **silently** — a blip that recovers makes no
+        noise; only a genuine give-up logs a single WARN. 401 is fatal."""
+        label = label or url
+        last_err = None
         for attempt in range(retries):
             with self._lock:
                 elapsed = time.time() - self._last_request
@@ -37,24 +45,29 @@ class H1Session:
                 resp = self.session.get(url, timeout=30)
                 if resp.status_code == 200:
                     return resp.json()
-                elif resp.status_code == 401:
+                if resp.status_code == 401:
                     log("Authentication failed. Check your API credentials.", "ERR")
                     log("Get your token at: https://hackerone.com/settings/api_token/edit", "ERR")
                     sys.exit(1)
-                elif resp.status_code == 429:
+                if resp.status_code == 429:
                     wait = min(2 ** attempt * 2, 30)
-                    log(f"Rate limited, waiting {wait}s...", "WARN")
+                    log(f"Rate limited on {label}, waiting {wait}s "
+                        f"(retry {attempt + 1}/{retries})...", "WARN")
                     time.sleep(wait)
                     continue
-                else:
-                    return None
-            except requests.exceptions.ConnectionError:
-                log("Connection error. Check your internet connection.", "ERR")
-                if attempt < retries - 1:
-                    time.sleep(2)
-            except Exception:
-                if attempt < retries - 1:
-                    time.sleep(1)
+                # Any other status is not retryable — surface it, don't swallow.
+                log(f"{label}: HTTP {resp.status_code}", "WARN")
+                return None
+            except requests.exceptions.RequestException as exc:
+                # Transient (connection reset / timeout / DNS). Retry quietly.
+                last_err = str(exc) or exc.__class__.__name__
+            except Exception as exc:  # malformed JSON etc. — also retry
+                last_err = str(exc) or exc.__class__.__name__
+            if attempt < retries - 1:
+                time.sleep(2)
+        # All retries exhausted: one proportionate line that names what was
+        # skipped (not a scary "check your internet" on a self-healing event).
+        log(f"Gave up on {label} after {retries} tries ({last_err}) — skipped", "WARN")
         return None
 
 
@@ -90,13 +103,17 @@ def fetch_programs(session, prog_filter="bbp,private"):
     url = f"{H1_API_BASE}/hackers/programs?page[size]=100"
     skipped = {"pub": 0, "vdp": 0, "bbp": 0, "priv": 0}
     page = 0
+    incomplete = False
 
     while url:
         page += 1
         progress(f"{_SPIN[page % len(_SPIN)]} Fetching programs · page {page} · "
                  f"{len(all_programs)} kept · {sum(skipped.values())} skipped")
-        data = session.get(url)
-        if not data or "data" not in data:
+        data = session.get(url, label=f"programs page {page}")
+        if data is None:
+            incomplete = True
+            break
+        if "data" not in data:
             break
 
         for prog in data["data"]:
@@ -134,6 +151,9 @@ def fetch_programs(session, prog_filter="bbp,private"):
         url = (f"{H1_API_BASE}{nxt}" if nxt and not nxt.startswith("http") else nxt) if nxt and nxt != url else None
 
     progress_done()  # release the in-place line before the summary
+    if incomplete:
+        log("  Program listing stopped early after a fetch error — "
+            "results may be incomplete.", "WARN")
     skip_msg = ", ".join(f"{v} {k}" for k, v in skipped.items() if v > 0) or "none"
     log(f"  Filtered [{prog_filter}]: {len(all_programs)} programs (skipped: {skip_msg})", "OK")
     return all_programs
@@ -145,7 +165,7 @@ def fetch_scopes(session, handle, asset_types=None):
     scopes = []
     url = f"{H1_API_BASE}/hackers/programs/{handle}/structured_scopes?page[size]=100"
     while url:
-        data = session.get(url)
+        data = session.get(url, label=f"scopes for {handle}")
         if not data or "data" not in data:
             break
         for s in data["data"]:

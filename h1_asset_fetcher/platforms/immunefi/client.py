@@ -64,12 +64,38 @@ def _log(log, msg, level="INFO"):
         pass
 
 
+class _BotChallenge(Exception):
+    """Raised when Immunefi serves a JS bot-protection interstitial (Vercel
+    Security Checkpoint / Cloudflare) that a plain HTTP client cannot pass."""
+
+
+# Markers that identify a JS bot-protection page rather than real content.
+_CHALLENGE_MARKERS = (
+    "security checkpoint", "just a moment", "challenge-platform",
+    "cf-browser-verification", "attention required", "enable javascript and cookies",
+)
+
+
+def _is_bot_challenge(resp):
+    """True if the response is a bot-protection interstitial (not real content)."""
+    if resp is None or resp.status_code not in (403, 429, 503):
+        return False
+    body = (resp.text or "")[:2000].lower()
+    return any(m in body for m in _CHALLENGE_MARKERS)
+
+
 def _get(session, url, log):
-    """GET ``url`` with a few brief retries. Returns response text or None."""
+    """GET ``url`` with a few brief retries. Returns response text or None.
+
+    Raises _BotChallenge if the response is a JS bot-protection interstitial —
+    retrying or hammering more URLs from a flagged IP only makes it worse.
+    """
     last_err = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             resp = session.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+            if _is_bot_challenge(resp):
+                raise _BotChallenge(url)
             if resp.status_code == 200:
                 return resp.text
             last_err = f"HTTP {resp.status_code}"
@@ -191,7 +217,15 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
 
     _log(log, "Fetching Immunefi program list", "STEP")
 
-    list_html = _get(session, BOUNTY_LIST_URL, log)
+    try:
+        list_html = _get(session, BOUNTY_LIST_URL, log)
+    except _BotChallenge:
+        _log(log, "Immunefi is behind a bot-protection challenge (Vercel Security "
+                  "Checkpoint / Cloudflare) that blocks automated scraping from this "
+                  "IP. Try again later or from a different/residential IP. (Immunefi "
+                  "scope is almost entirely smart contracts — it rarely yields "
+                  "mobile/exe assets anyway.)", "ERR")
+        return []
     if list_html is None:
         # No network / blocked. Immunefi has no token, so this is not an auth
         # problem — surface a warning and return nothing rather than crash.
@@ -218,13 +252,26 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
     _log(log, f"Found {len(program_ids)} Immunefi programs", "OK")
 
     programs = []
+    failed = 0
     for idx, (slug, listed_name, detail_url) in enumerate(program_ids, 1):
         time.sleep(_COURTESY_DELAY)
-
-        page_html = _get(session, detail_url, log)
-        assets = _json_array_after(_rsc_blob(page_html or ""), "assets")
-
         name = listed_name if isinstance(listed_name, str) and listed_name else slug
+
+        try:
+            page_html = _get(session, detail_url, log)
+        except _BotChallenge:
+            _log(log, f"Immunefi bot-protection challenge hit after {idx - 1} "
+                      "program(s) — stopping early to avoid getting this IP further "
+                      "blocked. Retry later or from a different/residential IP.", "ERR")
+            break
+        if page_html is None:
+            # Detail page failed to load — name it rather than silently counting
+            # it as "no mobile/exe assets" in the summary.
+            failed += 1
+            _log(log, f"[{idx}/{len(program_ids)}] {name}: page failed to load — skipped",
+                 "WARN")
+            continue
+        assets = _json_array_after(_rsc_blob(page_html), "assets")
 
         scopes = []
         for asset in assets:
@@ -246,6 +293,8 @@ def fetch(token=None, username=None, prog_filter="all", asset_types=(),
         })
 
     matched = sum(1 for p in programs if p["scopes"])
-    _log(log, f"Immunefi: {matched}/{len(programs)} programs with mobile/exe assets",
-         "STEP")
+    summary = f"Immunefi: {matched}/{len(programs)} programs with mobile/exe assets"
+    if failed:
+        summary += f" ({failed} failed to load)"
+    _log(log, summary, "STEP")
     return programs

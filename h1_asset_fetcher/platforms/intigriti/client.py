@@ -231,6 +231,9 @@ def _scrape_program(session, token, record, asset_types, oos, bbp_only, log):
 
     detail = _request(session, f"{API_BASE}/programs/{prog_id}", token, log)
     if detail is None:
+        # Distinguish an error-skip from a genuinely empty program so the user
+        # knows this program's assets were dropped, not absent.
+        log(f"Skipped {name}: scope fetch failed", "WARN")
         return None
 
     scopes = []

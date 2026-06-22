@@ -223,8 +223,10 @@ def run():
     # 6. Download — apkeep only fetches Android APKs, so offer only those.
     apk_assets = _apk_assets(vp)
     if not apk_assets:
-        log("No Android assets to download — apkeep only fetches APKs. "
-            "iOS / exe / Windows assets are saved in the output for manual download.", "INFO")
+        log(f"Nothing to auto-download here: apkeep only fetches Android APKs, and "
+            f"none of these {len(vp)} target(s) are APKs (iOS / exe / Windows). "
+            f"They're all listed in {outdir}/ (packages.txt, store_links.txt) — "
+            f"grab them manually from the App Store / vendor download page.", "INFO")
         return
     if not _ask(questionary.confirm(
             f"Download {len(apk_assets)} APK(s) now?", default=True, style=STYLE)):

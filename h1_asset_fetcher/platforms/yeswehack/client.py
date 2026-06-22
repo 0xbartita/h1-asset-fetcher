@@ -196,6 +196,9 @@ def _program_scopes(session, slug, token, asset_types, oos, log):
     data = _get(session, PROGRAM_BASE_ENDPOINT + slug, token, log)
     time.sleep(COURTESY_DELAY)
     if not isinstance(data, dict):
+        # Error-skip (fetch failed) — name it so it's not mistaken for a program
+        # that genuinely has no matching assets.
+        log("  Skipped %s: scope fetch failed" % slug, "WARN")
         return []
 
     out = []

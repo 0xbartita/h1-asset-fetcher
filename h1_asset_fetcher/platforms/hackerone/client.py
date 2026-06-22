@@ -15,6 +15,28 @@ H1_API_BASE = "https://api.hackerone.com/v1"
 # Braille spinner frames for the in-place pagination status line.
 _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
+# Throttling: HackerOne rate-limits the API, so stay well under its ceiling and
+# ride out 429s (they always clear with time) instead of dropping programs.
+_MIN_REQUEST_INTERVAL = 0.34   # min seconds between requests, global across workers
+_MAX_RATE_LIMIT_WAITS = 4      # times to wait out a 429 on one request before skipping
+_RATE_GIVEUP_LIMIT = 2         # throttle give-ups before aborting the whole run
+
+
+class H1RateLimited(Exception):
+    """HackerOne is throttling the token hard enough that progress stalls — the
+    run should stop and the user should retry in a few minutes."""
+
+
+def _retry_after_seconds(resp, fallback):
+    """Honor a 429 Retry-After header (seconds), clamped to [1, 30]; else fallback."""
+    raw = resp.headers.get("Retry-After")
+    if raw:
+        try:
+            return max(1, min(int(float(raw)), 30))
+        except (TypeError, ValueError):
+            pass
+    return fallback
+
 
 class H1Session:
     """Rate-limited HackerOne API session (HTTP Basic auth)."""
@@ -25,21 +47,26 @@ class H1Session:
         self.session.headers.update({"Accept": "application/json"})
         self._lock = threading.Lock()
         self._last_request = 0
+        self._rate_giveups = 0   # programs skipped due to sustained 429s
 
     def get(self, url, retries=3, label=None):
         """Rate-limited GET with retries. Returns parsed JSON, or None on failure.
 
-        `label` is a human name for what's being fetched (e.g. "scopes for acme")
-        so any message says what was affected. Transient errors (connection
-        reset / timeout) are retried **silently** — a blip that recovers makes no
-        noise; only a genuine give-up logs a single WARN. 401 is fatal."""
+        `label` names what's being fetched (e.g. "scopes for acme") so any
+        message says what was affected. Transient errors (connection reset /
+        timeout) retry **silently** — a recovered blip makes no noise. A 429
+        rate limit is waited out patiently (it always clears) honoring
+        Retry-After, without burning the transient-error budget. 401 is fatal;
+        sustained throttling raises H1RateLimited to stop the run cleanly."""
         label = label or url
         last_err = None
-        for attempt in range(retries):
+        rate_waits = 0
+        attempt = 0
+        while attempt < retries:
             with self._lock:
                 elapsed = time.time() - self._last_request
-                if elapsed < 0.12:
-                    time.sleep(0.12 - elapsed)
+                if elapsed < _MIN_REQUEST_INTERVAL:
+                    time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
                 self._last_request = time.time()
             try:
                 resp = self.session.get(url, timeout=30)
@@ -50,22 +77,35 @@ class H1Session:
                     log("Get your token at: https://hackerone.com/settings/api_token/edit", "ERR")
                     sys.exit(1)
                 if resp.status_code == 429:
-                    wait = min(2 ** attempt * 2, 30)
+                    rate_waits += 1
+                    if rate_waits > _MAX_RATE_LIMIT_WAITS:
+                        self._rate_giveups += 1
+                        if self._rate_giveups >= _RATE_GIVEUP_LIMIT:
+                            raise H1RateLimited(
+                                "HackerOne is throttling this token hard (repeated "
+                                "429s). Wait a few minutes and re-run.")
+                        log(f"Gave up on {label}: still rate-limited after "
+                            f"{_MAX_RATE_LIMIT_WAITS} waits — skipped", "WARN")
+                        return None
+                    wait = _retry_after_seconds(resp, min(2 ** rate_waits, 30))
                     log(f"Rate limited on {label}, waiting {wait}s "
-                        f"(retry {attempt + 1}/{retries})...", "WARN")
+                        f"(rate-limit retry {rate_waits}/{_MAX_RATE_LIMIT_WAITS})...", "WARN")
                     time.sleep(wait)
-                    continue
+                    continue  # a 429 doesn't consume the transient-error budget
                 # Any other status is not retryable — surface it, don't swallow.
                 log(f"{label}: HTTP {resp.status_code}", "WARN")
                 return None
+            except H1RateLimited:
+                raise
             except requests.exceptions.RequestException as exc:
                 # Transient (connection reset / timeout / DNS). Retry quietly.
                 last_err = str(exc) or exc.__class__.__name__
             except Exception as exc:  # malformed JSON etc. — also retry
                 last_err = str(exc) or exc.__class__.__name__
-            if attempt < retries - 1:
+            attempt += 1
+            if attempt < retries:
                 time.sleep(2)
-        # All retries exhausted: one proportionate line that names what was
+        # Transient retries exhausted: one proportionate WARN naming what was
         # skipped (not a scary "check your internet" on a self-healing event).
         log(f"Gave up on {label} after {retries} tries ({last_err}) — skipped", "WARN")
         return None
@@ -187,16 +227,22 @@ def fetch_scopes(session, handle, asset_types=None):
     return scopes
 
 
-def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=5):
+def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=3):
     if asset_types is None:
         asset_types = SCOPE_TYPES["android"]
     log("Fetching programs from HackerOne API...", "STEP")
-    programs = fetch_programs(session, prog_filter=prog_filter)
+    try:
+        programs = fetch_programs(session, prog_filter=prog_filter)
+    except H1RateLimited as e:
+        progress_done()  # release the in-place pagination line if it was active
+        log(str(e), "ERR")
+        return []
     if not programs:
         return []
     log(f"  Found {len(programs)} programs, fetching scopes ({workers} workers)...", "OK")
 
     found = 0
+    throttled = False
 
     def worker(p):
         p["scopes"] = fetch_scopes(session, p["handle"], asset_types=asset_types)
@@ -205,13 +251,24 @@ def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=5):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(worker, p): p for p in programs}
         for i, f in enumerate(as_completed(futures), 1):
-            p = f.result()
+            try:
+                p = f.result()
+            except H1RateLimited as e:
+                throttled = True
+                log(str(e), "ERR")
+                for fut in futures:
+                    fut.cancel()
+                break
             if p["scopes"]:
                 found += 1
                 log(f"  [{found}] {p['name']} -> {len(p['scopes'])} asset(s)", "OK")
             if i % 200 == 0:
                 log(f"  ... {i}/{len(programs)}, {found} with assets", "STEP")
 
-    result = [p for p in programs if p["scopes"]]
-    log(f"  Done: {len(result)} programs, {sum(len(p['scopes']) for p in result)} total assets", "OK")
+    result = [p for p in programs if p.get("scopes")]
+    if throttled:
+        log(f"  Stopped early due to throttling — got {len(result)} program(s). "
+            f"Wait a few minutes and re-run for the rest.", "WARN")
+    log(f"  Done: {len(result)} programs, "
+        f"{sum(len(p['scopes']) for p in result)} total assets", "OK")
     return result

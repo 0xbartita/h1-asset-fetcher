@@ -7,9 +7,10 @@ from h1_asset_fetcher.platforms.hackerone import client as hc
 
 
 class _Resp:
-    def __init__(self, status, payload=None):
+    def __init__(self, status, payload=None, headers=None):
         self.status_code = status
         self._payload = payload or {}
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -77,3 +78,21 @@ def test_401_is_fatal(monkeypatch):
     s = _session([_Resp(401)], monkeypatch, logs)
     with pytest.raises(SystemExit):
         s.get("http://x", label="x")
+
+
+def test_rate_limit_is_waited_out_then_succeeds(monkeypatch):
+    # A 429 is ridden out and does NOT burn the transient-error retry budget.
+    logs = []
+    s = _session([_Resp(429), _Resp(200, {"ok": 1})], monkeypatch, logs)
+    assert s.get("http://x", label="scopes for acme", retries=3) == {"ok": 1}
+    assert not any(level == "ERR" for level, _ in logs)
+
+
+def test_sustained_rate_limit_aborts_run(monkeypatch):
+    # When programs can't get past 429, the run aborts with H1RateLimited
+    # instead of silently dropping everything (death-march protection).
+    logs = []
+    s = _session([_Resp(429)] * 12, monkeypatch, logs)
+    assert s.get("http://x", label="scopes for a", retries=3) is None   # 1st give-up
+    with pytest.raises(hc.H1RateLimited):
+        s.get("http://y", label="scopes for b", retries=3)              # 2nd → abort

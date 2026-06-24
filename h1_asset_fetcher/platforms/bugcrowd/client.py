@@ -433,13 +433,20 @@ def _map_targets(targets, eligible, asset_types, oos):
 
     for tgt in targets:
         category = (tgt.get("category") or "").strip().lower()
-        identifier = tgt.get("uri") or tgt.get("name") or ""
+        name = (tgt.get("name") or "").strip()
+        uri = (tgt.get("uri") or "").strip()
+        identifier = uri or name
         if not identifier:
             continue
 
-        # Drop obvious non-mobile/exe buckets early; map_mobile_asset would
-        # return None anyway, but this avoids surprises on odd category names.
+        # Resolve the asset type from the URI/category first (URLs, store links,
+        # file extensions). Bugcrowd files every desktop/exe target under the
+        # catch-all "other" category with the OS stated only in the NAME
+        # ("Desktop MFA for Windows", "Intercept X Endpoint (Windows)"), so if
+        # the URI didn't resolve it, scan the human-readable name as a label.
         asset_type = map_mobile_asset(category, identifier)
+        if asset_type is None and name and name != identifier:
+            asset_type = map_mobile_asset(category, name)
         if asset_type is None:
             continue
         if asset_types and asset_type not in asset_types:

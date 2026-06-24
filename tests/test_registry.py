@@ -30,6 +30,33 @@ def test_map_mobile_asset():
     assert map_mobile_asset("website", "https://x.com") is None
 
 
+def test_map_mobile_asset_desktop_from_label():
+    # Bugcrowd files desktop/exe assets under the catch-all "other" category and
+    # names the OS only in the human-readable label — these must be detected.
+    for label in ("Desktop MFA for Windows", "Okta Verify (Windows)",
+                  "Okta Agent Windows", "Mattermost Desktop Apps",
+                  "Gestor de Pedidos - Desktop Client",
+                  "Intercept X Endpoint (MacOS)"):
+        assert map_mobile_asset("other", label) == "DOWNLOADABLE_EXECUTABLES", label
+    # Explicit category hints from Intigriti/YesWeHack still resolve.
+    assert map_mobile_asset("executable", "https://acme.com/app") == "DOWNLOADABLE_EXECUTABLES"
+    # File extensions are a category-independent signal.
+    assert map_mobile_asset("", "https://dl.acme.com/setup.exe") == "DOWNLOADABLE_EXECUTABLES"
+    assert map_mobile_asset("other", "AcmeInstaller.dmg") == "DOWNLOADABLE_EXECUTABLES"
+
+
+def test_map_mobile_asset_no_false_positives():
+    # An OS word buried in a URL path of a web/"other" target must NOT be read
+    # as an executable (URLs aren't label-scanned; bare hosts have no spaces).
+    assert map_mobile_asset("other", "https://promo.acme.com/windows-update") is None
+    assert map_mobile_asset("website", "https://download.acme.com/windows") is None
+    # "mac" as a substring of a hostname is not macOS.
+    assert map_mobile_asset("other", "macys.com") is None
+    # Microsoft Store pages are a store listing, not a downloadable binary.
+    assert map_mobile_asset("other", "https://apps.microsoft.com/detail/9NABC") \
+        == "WINDOWS_APP_STORE_APP_ID"
+
+
 def test_unknown_platform_raises():
     with pytest.raises(KeyError):
         get_platform("does_not_exist")

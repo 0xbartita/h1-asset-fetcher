@@ -23,6 +23,7 @@ pipeline is reused unchanged:
 """
 import importlib
 import pkgutil
+import re
 
 H1_ASSET_TYPES = (
     "GOOGLE_PLAY_APP_ID", "OTHER_APK",
@@ -106,14 +107,43 @@ def all_platforms():
     return [cls() for cls in _REGISTRY.values()]
 
 
+# Desktop / OS keywords that, when they appear as words in a human-readable
+# target label ("Desktop MFA for Windows", "Okta Verify (Windows)"), identify a
+# downloadable executable. Word-bounded so "macys.com" or a "/windows-update"
+# URL path don't trip it — URLs are excluded from this scan separately.
+_DESKTOP_RE = re.compile(
+    r"\b(?:windows|win32|win64|macos|mac\s?os|osx|desktop|executables?|"
+    r"binary|electron)\b", re.IGNORECASE)
+
+# Downloadable-binary file extensions: a strong, category-independent signal.
+_EXE_EXTS = (".exe", ".dmg", ".pkg", ".msi", ".appx")
+
+# Category tokens meaning "web / network / hardware infrastructure". When a
+# platform has already bucketed a target this way we trust it and never apply
+# the desktop label heuristic (OS names in URL paths would otherwise misfire).
+_WEB_CATEGORY_TOKENS = ("website", "url", "api", "network", "ip", "cidr",
+                        "domain", "web", "wildcard", "hardware", "iot")
+
+
+def _is_generic_category(c):
+    """True when the category is empty/unknown (e.g. Bugcrowd's catch-all
+    "other") rather than an explicit web/network/hardware bucket. Desktop
+    label-matching only runs for generic categories."""
+    return not any(tok in c for tok in _WEB_CATEGORY_TOKENS)
+
+
 def map_mobile_asset(category, identifier):
     """Map a coarse platform category + identifier to an H1 asset_type, or None.
 
-    `category`: lowercase hint, e.g. 'android', 'ios', 'testflight', 'windows',
-    'exe'/'executable', 'mac'. `identifier`: the raw target (URL / package id).
+    `category`: lowercase hint, e.g. 'android', 'ios', 'testflight',
+    'executable', 'other'. `identifier`: the raw target (URL, package id, or a
+    human label). Several platforms — Bugcrowd especially — file desktop
+    executables under a generic "other" category with the OS named only in the
+    label, so when the category is generic we also scan the label's words.
     """
     c = (category or "").lower()
     ident = (identifier or "").lower()
+
     if "testflight" in c or "testflight.apple.com" in ident:
         return "TESTFLIGHT"
     if "android" in c or "play.google.com" in ident or ident.endswith(".apk"):
@@ -121,9 +151,22 @@ def map_mobile_asset(category, identifier):
     if ("ios" in c or "iphone" in c or "ipad" in c or "apple" in c
             or "apps.apple.com" in ident or "itunes.apple.com" in ident):
         return "OTHER_IPA" if ident.endswith(".ipa") else "APPLE_STORE_APP_ID"
-    if "windows" in c or "microsoft" in c:
+
+    # Microsoft Store listing (a store page, not a downloadable binary).
+    if ("microsoft" in c or "windows store" in c
+            or "apps.microsoft.com" in ident or "microsoft store" in ident):
         return "WINDOWS_APP_STORE_APP_ID"
-    if ("exe" in c or "executable" in c or "mac" in c or "desktop" in c
-            or "binary" in c or ident.endswith((".exe", ".dmg", ".pkg", ".msi", ".appx"))):
+
+    # A downloadable binary file — strong signal, independent of category.
+    if ident.endswith(_EXE_EXTS):
         return "DOWNLOADABLE_EXECUTABLES"
+
+    # Desktop/OS named in the category hint or a human-readable label. The
+    # identifier is only scanned for words when it's a label (contains
+    # whitespace) — never a bare URL/host/package id — and only for generic
+    # categories, so a "/windows-update" path or "macys.com" can't misfire.
+    scan = c + " " + ident if " " in ident else c
+    if _is_generic_category(c) and _DESKTOP_RE.search(scan):
+        return "DOWNLOADABLE_EXECUTABLES"
+
     return None

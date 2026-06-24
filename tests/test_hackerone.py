@@ -96,3 +96,23 @@ def test_sustained_rate_limit_aborts_run(monkeypatch):
     assert s.get("http://x", label="scopes for a", retries=3) is None   # 1st give-up
     with pytest.raises(hc.H1RateLimited):
         s.get("http://y", label="scopes for b", retries=3)              # 2nd → abort
+
+
+def test_request_spacing_respects_documented_caps():
+    # Guard against a future tweak silently exceeding HackerOne's documented
+    # hacker-API limits (api.hackerone.com/getting-started-hacker-api/#rate-limits).
+    assert 60 / hc._READ_INTERVAL <= 600       # general read endpoints: 600/min
+    assert 60 / hc._SCOPES_INTERVAL <= 50      # structured_scopes endpoint: 50/min
+
+
+def test_scope_fetch_uses_the_stricter_scopes_interval(monkeypatch):
+    # The structured_scopes endpoint is capped at 50/min, so scope fetches must
+    # request the stricter spacing — not the faster general-read interval.
+    intervals = []
+    s = hc.H1Session("u", "t")
+    monkeypatch.setattr(
+        s, "get",
+        lambda url, retries=3, label=None, min_interval=None: (
+            intervals.append(min_interval) or {"data": []}))
+    hc.fetch_scopes(s, "acme", asset_types=("OTHER_APK",))
+    assert intervals and all(mi == hc._SCOPES_INTERVAL for mi in intervals)

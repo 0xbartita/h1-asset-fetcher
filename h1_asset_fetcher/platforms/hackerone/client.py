@@ -15,9 +15,18 @@ H1_API_BASE = "https://api.hackerone.com/v1"
 # Braille spinner frames for the in-place pagination status line.
 _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-# Throttling: HackerOne rate-limits the API, so stay well under its ceiling and
-# ride out 429s (they always clear with time) instead of dropping programs.
-_MIN_REQUEST_INTERVAL = 0.34   # min seconds between requests, global across workers
+# Per-endpoint request spacing, sized to HackerOne's documented hacker-API rate
+# limits (https://api.hackerone.com/getting-started-hacker-api/#rate-limits):
+#   * general read endpoints:        600 requests/min  -> ~0.10s apart
+#   * the structured_scopes endpoint: 50 requests/min  (its own, stricter cap)
+# Scope fetching is ~one request per program, so on a full scan the 50/min cap
+# is the binding constraint. We pace just under each ceiling so we never trip a
+# 429 in the first place; the retry logic below is only a safety net.
+_READ_INTERVAL = 0.12      # program listing etc. — under the 600/min read cap
+_SCOPES_INTERVAL = 1.3     # structured_scopes — ~46/min, under the 50/min cap
+
+# Safety net for stray 429s (shared-IP neighbour, momentary burst): ride them
+# out a few times, and only abort if throttling is genuinely sustained.
 _MAX_RATE_LIMIT_WAITS = 4      # times to wait out a 429 on one request before skipping
 _RATE_GIVEUP_LIMIT = 2         # throttle give-ups before aborting the whole run
 
@@ -49,9 +58,12 @@ class H1Session:
         self._last_request = 0
         self._rate_giveups = 0   # programs skipped due to sustained 429s
 
-    def get(self, url, retries=3, label=None):
+    def get(self, url, retries=3, label=None, min_interval=None):
         """Rate-limited GET with retries. Returns parsed JSON, or None on failure.
 
+        `min_interval` is the minimum seconds since the previous request before
+        this one fires, sized to the endpoint's documented limit (callers pass
+        _SCOPES_INTERVAL for structured_scopes; defaults to _READ_INTERVAL).
         `label` names what's being fetched (e.g. "scopes for acme") so any
         message says what was affected. Transient errors (connection reset /
         timeout) retry **silently** — a recovered blip makes no noise. A 429
@@ -59,14 +71,15 @@ class H1Session:
         Retry-After, without burning the transient-error budget. 401 is fatal;
         sustained throttling raises H1RateLimited to stop the run cleanly."""
         label = label or url
+        interval = _READ_INTERVAL if min_interval is None else min_interval
         last_err = None
         rate_waits = 0
         attempt = 0
         while attempt < retries:
             with self._lock:
                 elapsed = time.time() - self._last_request
-                if elapsed < _MIN_REQUEST_INTERVAL:
-                    time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+                if elapsed < interval:
+                    time.sleep(interval - elapsed)
                 self._last_request = time.time()
             try:
                 resp = self.session.get(url, timeout=30)
@@ -205,7 +218,8 @@ def fetch_scopes(session, handle, asset_types=None):
     scopes = []
     url = f"{H1_API_BASE}/hackers/programs/{handle}/structured_scopes?page[size]=100"
     while url:
-        data = session.get(url, label=f"scopes for {handle}")
+        data = session.get(url, label=f"scopes for {handle}",
+                           min_interval=_SCOPES_INTERVAL)
         if not data or "data" not in data:
             break
         for s in data["data"]:
@@ -227,7 +241,10 @@ def fetch_scopes(session, handle, asset_types=None):
     return scopes
 
 
-def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=3):
+def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=1):
+    # workers defaults to 1: the structured_scopes endpoint is capped at 50/min,
+    # so requests are serialized ~1.3s apart regardless — extra workers add no
+    # throughput and only risk bursting past the cap into 429s.
     if asset_types is None:
         asset_types = SCOPE_TYPES["android"]
     log("Fetching programs from HackerOne API...", "STEP")
@@ -239,7 +256,11 @@ def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=3):
         return []
     if not programs:
         return []
-    log(f"  Found {len(programs)} programs, fetching scopes ({workers} workers)...", "OK")
+    # ~1.3s spacing plus per-request latency works out to ~40 programs/min in
+    # practice (measured), so estimate against that rather than the raw spacing.
+    eta_min = max(1, -(-len(programs) // 40))  # ceil division
+    log(f"  Found {len(programs)} programs. Fetching scopes at ~40/min to stay "
+        f"under HackerOne's 50/min scope limit — about {eta_min} min.", "OK")
 
     found = 0
     throttled = False

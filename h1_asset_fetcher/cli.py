@@ -101,6 +101,9 @@ Get your H1 API token at: https://hackerone.com/settings/api_token/edit
     parser.add_argument("--forget", action="store_true",
                         help="Delete saved credentials/preferences "
                              "(~/.config/h1-asset-fetcher/config.json) and exit")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Ignore any cached fetch and re-query the API "
+                             "(HackerOne caches scopes to avoid re-scanning)")
     return parser
 
 
@@ -147,6 +150,8 @@ def _run_cli(argv):
     else:
         plat = get_platform(args.platform)
         creds = _resolve_creds(plat, args)
+        if args.refresh:
+            plat.clear_cache(args.filter)
         try:
             programs = plat.fetch(creds, args.scope, args.filter, args.oos)
         except PlatformAuthError as e:

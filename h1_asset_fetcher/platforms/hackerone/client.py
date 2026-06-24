@@ -7,10 +7,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-from ...core import log, progress, progress_done
+from ...core import log, progress, progress_done, cache
 from ...core.identifiers import SCOPE_TYPES
 
 H1_API_BASE = "https://api.hackerone.com/v1"
+
+# A full private-BBP scan is ~12 min (50/min scope cap), so cache the raw fetch
+# keyed by program-filter. Re-running, or switching scope (android/ios/exe),
+# then completes with zero API calls. Scopes change rarely; expire after a week.
+_CACHE_NAME = "hackerone-scopes"
+_CACHE_TTL = 7 * 24 * 3600
 
 # Braille spinner frames for the in-place pagination status line.
 _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -241,24 +247,66 @@ def fetch_scopes(session, handle, asset_types=None):
     return scopes
 
 
-def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=1):
-    # workers defaults to 1: the structured_scopes endpoint is capped at 50/min,
-    # so requests are serialized ~1.3s apart regardless — extra workers add no
-    # throughput and only risk bursting past the cap into 429s.
-    if asset_types is None:
-        asset_types = SCOPE_TYPES["android"]
+# --------------------------------------------------------------------------- #
+# scope cache (keyed by program-filter; stores ALL mobile/exe asset types)
+# --------------------------------------------------------------------------- #
+
+def _cached_entry(prog_filter):
+    """Return the fresh cache entry for `prog_filter`, or None if absent/stale."""
+    entry = (cache.load(_CACHE_NAME).get("filters") or {}).get(prog_filter)
+    if not entry or "programs" not in entry:
+        return None
+    if cache.now() - entry.get("fetched_at", 0) > _CACHE_TTL:
+        return None
+    return entry
+
+
+def cache_status(prog_filter):
+    """For the wizard/CLI: (program_count, age_string) if a fresh cache exists
+    for this filter, else None."""
+    entry = _cached_entry(prog_filter)
+    if not entry:
+        return None
+    return len(entry["programs"]), cache.human_age(cache.now() - entry["fetched_at"])
+
+
+def clear_cache(prog_filter=None):
+    """Drop the cached fetch for one filter, or the whole cache if None."""
+    if prog_filter is None:
+        cache.clear(_CACHE_NAME)
+        return
+    data = cache.load(_CACHE_NAME)
+    filters = dict(data.get("filters") or {})
+    if filters.pop(prog_filter, None) is not None:
+        data["filters"] = filters
+        cache.save(_CACHE_NAME, data)
+
+
+def _store_cache(prog_filter, programs):
+    data = cache.load(_CACHE_NAME)
+    filters = dict(data.get("filters") or {})
+    filters[prog_filter] = {"fetched_at": cache.now(), "programs": programs}
+    data["filters"] = filters
+    cache.save(_CACHE_NAME, data)
+
+
+def _fetch_fresh(session, prog_filter, workers):
+    """List programs and fetch every program's mobile/exe scopes from the API.
+
+    Stores ALL mobile/exe asset types per program (the endpoint returns them in
+    one call regardless) so the cache serves any scope. Returns
+    (programs, throttled); `programs` is None only if listing itself failed."""
     log("Fetching programs from HackerOne API...", "STEP")
     try:
         programs = fetch_programs(session, prog_filter=prog_filter)
     except H1RateLimited as e:
         progress_done()  # release the in-place pagination line if it was active
         log(str(e), "ERR")
-        return []
+        return None, True
     if not programs:
-        return []
-    # ~1.3s spacing plus per-request latency works out to ~40 programs/min in
-    # practice (measured), so estimate against that rather than the raw spacing.
-    eta_min = max(1, -(-len(programs) // 40))  # ceil division
+        return [], False
+
+    eta_min = max(1, -(-len(programs) // 40))  # ceil division; ~40/min measured
     log(f"  Found {len(programs)} programs. Fetching scopes at ~40/min to stay "
         f"under HackerOne's 50/min scope limit — about {eta_min} min.", "OK")
 
@@ -266,7 +314,8 @@ def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=1):
     throttled = False
 
     def worker(p):
-        p["scopes"] = fetch_scopes(session, p["handle"], asset_types=asset_types)
+        p["scopes"] = fetch_scopes(session, p["handle"],
+                                   asset_types=SCOPE_TYPES["all"])
         return p
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -286,10 +335,46 @@ def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=1):
             if i % 200 == 0:
                 log(f"  ... {i}/{len(programs)}, {found} with assets", "STEP")
 
-    result = [p for p in programs if p.get("scopes")]
-    if throttled:
-        log(f"  Stopped early due to throttling — got {len(result)} program(s). "
-            f"Wait a few minutes and re-run for the rest.", "WARN")
+    return programs, throttled
+
+
+def fetch_all(session, prog_filter="bbp,private", asset_types=None, workers=1,
+              use_cache=True):
+    # workers defaults to 1: the structured_scopes endpoint is capped at 50/min,
+    # so requests are serialized ~1.3s apart regardless — extra workers add no
+    # throughput and only risk bursting past the cap into 429s.
+    if asset_types is None:
+        asset_types = SCOPE_TYPES["android"]
+    asset_types = set(asset_types)
+
+    cached = _cached_entry(prog_filter) if use_cache else None
+    if cached:
+        programs = cached["programs"]
+        age = cache.human_age(cache.now() - cached["fetched_at"])
+        log(f"Using cached HackerOne scopes for [{prog_filter}] "
+            f"({len(programs)} programs, fetched {age} ago) — no API calls. "
+            f"Re-run with --refresh (or decline the wizard prompt) for a fresh fetch.",
+            "OK")
+    else:
+        programs, throttled = _fetch_fresh(session, prog_filter, workers)
+        if programs is None:
+            return []
+        # Only cache a complete fetch — a throttled run is partial and would
+        # otherwise masquerade as the full result on the next run.
+        if programs and not throttled:
+            _store_cache(prog_filter, programs)
+        elif throttled:
+            log(f"  Stopped early due to throttling — got "
+                f"{sum(1 for p in programs if p.get('scopes'))} program(s); not "
+                f"caching a partial result. Wait a few minutes and re-run.", "WARN")
+
+    # Filter each program's cached (all-type) scopes down to the requested scope.
+    result = []
+    for p in programs:
+        scopes = [s for s in (p.get("scopes") or [])
+                  if s.get("asset_type") in asset_types]
+        if scopes:
+            result.append({**p, "scopes": scopes})
     log(f"  Done: {len(result)} programs, "
-        f"{sum(len(p['scopes']) for p in result)} total assets", "OK")
+        f"{sum(len(p['scopes']) for p in result)} matching assets", "OK")
     return result

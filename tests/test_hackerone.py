@@ -116,3 +116,93 @@ def test_scope_fetch_uses_the_stricter_scopes_interval(monkeypatch):
             intervals.append(min_interval) or {"data": []}))
     hc.fetch_scopes(s, "acme", asset_types=("OTHER_APK",))
     assert intervals and all(mi == hc._SCOPES_INTERVAL for mi in intervals)
+
+
+# --- scope cache ----------------------------------------------------------- #
+
+def _stub_fetch(monkeypatch, tmp_path):
+    """Isolate the cache to tmp and stub the network so fetch_all runs offline.
+    Returns a dict tracking how many times scopes were actually fetched."""
+    monkeypatch.setenv("H1_ASSET_FETCHER_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(hc, "log", lambda *a, **k: None)
+    calls = {"scopes": 0}
+    progs = [{"handle": "acme", "name": "Acme", "platform": "hackerone"},
+             {"handle": "beta", "name": "Beta", "platform": "hackerone"}]
+    monkeypatch.setattr(hc, "fetch_programs", lambda s, prog_filter="": [dict(p) for p in progs])
+
+    def fake_scopes(s, handle, asset_types=None):
+        calls["scopes"] += 1
+        # Each program returns BOTH an android and an iOS asset (all types cached).
+        return [{"asset_type": "OTHER_APK", "asset_identifier": f"com.{handle}"},
+                {"asset_type": "APPLE_STORE_APP_ID", "asset_identifier": f"{handle}-ios"}]
+    monkeypatch.setattr(hc, "fetch_scopes", fake_scopes)
+    return calls
+
+
+def test_fetch_all_caches_then_reuses_without_api(monkeypatch, tmp_path):
+    calls = _stub_fetch(monkeypatch, tmp_path)
+    android = hc.SCOPE_TYPES["android"]
+
+    first = hc.fetch_all(None, prog_filter="bbp,private", asset_types=android)
+    assert calls["scopes"] == 2                       # one fetch per program
+    assert {p["handle"] for p in first} == {"acme", "beta"}
+    assert all(s["asset_type"] in android for p in first for s in p["scopes"])
+
+    # Second run: served entirely from cache, zero new scope fetches.
+    second = hc.fetch_all(None, prog_filter="bbp,private", asset_types=android)
+    assert calls["scopes"] == 2                       # unchanged
+    assert {p["handle"] for p in second} == {"acme", "beta"}
+
+
+def test_cache_serves_a_different_scope_offline(monkeypatch, tmp_path):
+    # The cache stores ALL asset types, so switching android -> ios needs no API.
+    calls = _stub_fetch(monkeypatch, tmp_path)
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    assert calls["scopes"] == 2
+    ios = hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["ios"])
+    assert calls["scopes"] == 2                        # still no new fetches
+    assert ios and all(s["asset_type"] in hc.SCOPE_TYPES["ios"]
+                       for p in ios for s in p["scopes"])
+
+
+def test_cache_status_and_clear(monkeypatch, tmp_path):
+    _stub_fetch(monkeypatch, tmp_path)
+    assert hc.cache_status("bbp,private") is None       # nothing cached yet
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    status = hc.cache_status("bbp,private")
+    assert status and status[0] == 2                    # (count, age_str)
+    hc.clear_cache("bbp,private")
+    assert hc.cache_status("bbp,private") is None
+
+
+def test_stale_cache_is_ignored(monkeypatch, tmp_path):
+    calls = _stub_fetch(monkeypatch, tmp_path)
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    assert calls["scopes"] == 2
+    # Jump now() past the TTL: the cache is too old to reuse -> refetch.
+    real_now = hc.cache.now()
+    monkeypatch.setattr(hc.cache, "now", lambda: real_now + hc._CACHE_TTL + 1)
+    assert hc.cache_status("bbp,private") is None
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    assert calls["scopes"] == 4                         # fetched again
+
+
+def test_use_cache_false_bypasses_cache(monkeypatch, tmp_path):
+    calls = _stub_fetch(monkeypatch, tmp_path)
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    assert calls["scopes"] == 2
+    hc.fetch_all(None, prog_filter="bbp,private",
+                 asset_types=hc.SCOPE_TYPES["android"], use_cache=False)
+    assert calls["scopes"] == 4                         # forced fresh fetch
+
+
+def test_throttled_fetch_is_not_cached(monkeypatch, tmp_path):
+    _stub_fetch(monkeypatch, tmp_path)
+    # Simulate a throttle-aborted fetch: partial programs + throttled=True.
+    monkeypatch.setattr(hc, "_fetch_fresh",
+                        lambda s, pf, w: ([{"handle": "acme", "name": "Acme",
+                                            "scopes": [{"asset_type": "OTHER_APK",
+                                                        "asset_identifier": "com.acme"}]}],
+                                          True))
+    hc.fetch_all(None, prog_filter="bbp,private", asset_types=hc.SCOPE_TYPES["android"])
+    assert hc.cache_status("bbp,private") is None        # partial result not cached

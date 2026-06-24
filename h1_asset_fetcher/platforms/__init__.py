@@ -71,6 +71,14 @@ class Platform:
         """Return list[program] (normalized). `creds` is {cred_key: value}."""
         raise NotImplementedError
 
+    def cache_status(self, filters):
+        """Optional: (program_count, age_str) if a reusable cached fetch exists
+        for these filters, else None. Platforms without caching return None."""
+        return None
+
+    def clear_cache(self, filters=None):
+        """Optional: drop any cached fetch so the next run hits the API fresh."""
+
 
 _REGISTRY = {}
 _discovered = False

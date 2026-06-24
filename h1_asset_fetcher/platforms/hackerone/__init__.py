@@ -20,3 +20,9 @@ class HackerOne(Platform):
         session = client.H1Session(creds["username"], creds["token"])
         return client.fetch_all(session, prog_filter=filters,
                                 asset_types=SCOPE_TYPES[scope])
+
+    def cache_status(self, filters):
+        return client.cache_status(filters)
+
+    def clear_cache(self, filters=None):
+        client.clear_cache(filters)

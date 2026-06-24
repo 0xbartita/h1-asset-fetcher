@@ -178,6 +178,16 @@ def run():
     # Remember the choices for next time (persists even if the fetch fails).
     config.set_prefs(platform=plat_name, scope=scope, filter=prog_filter)
 
+    # Offer to reuse a cached fetch (HackerOne: avoids a ~12-min, rate-limited
+    # re-scan; switching scope reuses the same cache). Declining fetches fresh.
+    status = plat.cache_status(prog_filter)
+    if status:
+        count, age = status
+        if not _ask(questionary.confirm(
+                f"Re-use cached {plat.label} scopes ({count} programs, fetched "
+                f"{age} ago)? No API calls.", default=True, style=STYLE)):
+            plat.clear_cache(prog_filter)
+
     # 4. Fetch
     print()
     try:
